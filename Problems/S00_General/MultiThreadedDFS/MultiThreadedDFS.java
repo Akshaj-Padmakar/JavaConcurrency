@@ -9,42 +9,27 @@ import java.util.concurrent.Executors;
 
 public class MultiThreadedDFS {
     private final int n = 5;
-    private Map<Integer, List<Integer>> mp = new HashMap<>();
+    private Map<Integer, List<Integer>> g;
+    private List<Boolean> vis;
     private ExecutorService threadPool = Executors.newFixedThreadPool(3);
-    private List<Boolean> vis = new ArrayList<>();
 
-    public class dfs implements Runnable {
-        private int node;
-        private int previous;
-        public dfs(int node, int previous){
-            this.node = node;
-            this.previous = previous;
-        }
-
-        @Override
-        public void run() {
-            synchronized(vis){
-                if(vis.get(this.node)){
-                    return;
-                }
-                System.out.println("Visited node: " + this.node + " and previousNode: " + this.previous + " and using Thread: " + Thread.currentThread().getName());
-                vis.set(this.node, true);
-            }
-
-            for(Integer child : mp.get(this.node)){
-                threadPool.execute(new dfs(child, node));
-            }
-        }
-    }
-    
-    public void multiThreadedDFS(){
-        threadPool.execute(new dfs(1, -1));
+    public static void main(String[] args) throws InterruptedException {
+        new MultiThreadedDFS().solve();
     }
 
-    public void solve() throws InterruptedException {
-        vis.add(false);
-        for(int i = 1; i <= n; i++){
-            mp.put(i, new ArrayList<>());
+    private void solve() throws InterruptedException {
+        intializeAndCreateGraph();
+        multiThreadedDFS();
+
+        Thread.sleep(1000);
+        threadPool.shutdown();
+    }
+
+    private void intializeAndCreateGraph() {
+        g = new HashMap<>();
+        vis = new ArrayList<>();
+        for (int i = 0; i <= n; i++) {
+            g.put(i, new ArrayList<>());
             vis.add(false);
         }
         addEdge(1, 2);
@@ -53,15 +38,39 @@ public class MultiThreadedDFS {
         addEdge(3, 4);
         addEdge(3, 5);
         addEdge(4, 2);
+    }
 
-        multiThreadedDFS();
-        Thread.sleep(1000);
-        threadPool.shutdown();
+    private void addEdge(int i, int j) {
+        g.get(i).add(j);
     }
-    private void addEdge(int i, int j){
-        mp.get(i).add(j);
+
+    private void multiThreadedDFS() {
+        threadPool.execute(new dfs(1, -1));
     }
-    public static void main(String[] args) throws InterruptedException {
-        new MultiThreadedDFS().solve();
+
+    private class dfs implements Runnable {
+        int node;
+        int par;
+
+        public dfs(int node, int par) {
+            this.node = node;
+            this.par = par;
+        }
+
+        @Override
+        public void run() {
+            synchronized (vis) { // Lock the visited array.
+                if (vis.get(node)) {
+                    return;
+                }
+                System.out.println("Visited node: " + this.node + " and previousNode: " + this.par
+                        + " and using Thread: " + Thread.currentThread().getName());
+
+                vis.add(this.node, true);
+            }
+            for (Integer ch : g.get(node)) {
+                threadPool.execute(new dfs(ch, node));
+            }
+        }
     }
 }
