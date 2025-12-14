@@ -1,4 +1,4 @@
-# MultiThreaded DFS.
+# S00 | P01 | MultiThreaded DFS.
 
 - Given a Directed/Undirected Graph, we want to visit all the nodes using the Depth first search algorithm using multiple threads.
 
