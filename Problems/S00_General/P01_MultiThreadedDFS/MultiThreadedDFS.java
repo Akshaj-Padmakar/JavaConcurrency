@@ -1,4 +1,4 @@
-package Problems.S00_General.MultiThreadedDFS;
+package Problems.S00_General.P01_MultiThreadedDFS;
 
 import java.util.ArrayList;
 import java.util.HashMap;
