@@ -1,76 +1,125 @@
 package Problems.S00_General.P01_MultiThreadedDFS;
 
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MultiThreadedDFS {
-    private final int n = 5;
-    private Map<Integer, List<Integer>> g;
-    private List<Boolean> vis;
-    private ExecutorService threadPool = Executors.newFixedThreadPool(3);
+    private final int n;
+    private Map<Node, List<Node>> g;
+    private Map<Node, Boolean> vis;
+    private ExecutorService threadPool;
 
-    public static void main(String[] args) throws InterruptedException {
-        new MultiThreadedDFS().solve();
+    private final AtomicInteger activeTasks = new AtomicInteger(0);
+    private final CountDownLatch completionLatch = new CountDownLatch(1); // Reference Counting for recursive work.
+
+    public MultiThreadedDFS(int n, Map<Node, List<Node>> g) {
+        this(n, g, 5);
     }
 
-    private void solve() throws InterruptedException {
-        intializeAndCreateGraph();
-        multiThreadedDFS();
+    public MultiThreadedDFS(int n, Map<Node, List<Node>> g, int threadCnt) {
+        this.n = n;
+        this.g = g;
+        this.threadPool = Executors.newFixedThreadPool(threadCnt);
+        this.vis = new HashMap<>();
+        for (Map.Entry<Node, List<Node>> node : g.entrySet()) {
+            vis.put(node.getKey(), false);
+        }
+    }
 
-        Thread.sleep(1000);
+    public void multiThreadedDFS(Node startNode) {
+        if (g.isEmpty()) {
+            System.out.println("[EROOR] Graph is null !");
+            return;
+        }
+        activeTasks.incrementAndGet();
+
+        threadPool.execute(new dfs(startNode, new Node("-1")));
+
+        try {
+            completionLatch.await();
+        } catch (InterruptedException ex) {
+            ex.printStackTrace();
+        }
         threadPool.shutdown();
     }
 
-    private void intializeAndCreateGraph() {
-        g = new HashMap<>();
-        vis = new ArrayList<>();
-        for (int i = 0; i <= n; i++) {
-            g.put(i, new ArrayList<>());
-            vis.add(false);
-        }
-        addEdge(1, 2);
-        addEdge(1, 3);
-        addEdge(2, 3);
-        addEdge(3, 4);
-        addEdge(3, 5);
-        addEdge(4, 2);
-    }
-
-    private void addEdge(int i, int j) {
-        g.get(i).add(j);
-    }
-
-    private void multiThreadedDFS() {
-        threadPool.execute(new dfs(1, -1));
-    }
-
     private class dfs implements Runnable {
-        int node;
-        int par;
+        private Node node;
+        private Node par;
 
-        public dfs(int node, int par) {
+        private dfs(Node node, Node par) {
             this.node = node;
             this.par = par;
         }
 
         @Override
         public void run() {
-            synchronized (vis) { // Lock the visited array.
-                if (vis.get(node)) {
-                    return;
+            try {
+                synchronized (vis) {
+                    if (vis.getOrDefault(node, false)) {
+                        return;
+                    }
+                    vis.put(node, true);
                 }
-                System.out.println("Visited node: " + this.node + " and previousNode: " + this.par
+                node.doWork(); // Heavy computation work.
+                System.out.println("Visited node: " + this.node.getId() + " and previousNode: " + this.par.getId()
                         + " and using Thread: " + Thread.currentThread().getName());
 
-                vis.add(this.node, true);
-            }
-            for (Integer ch : g.get(node)) {
-                threadPool.execute(new dfs(ch, node));
+                for (Node ch : g.getOrDefault(node, Collections.emptyList())) {
+                    if (ch == null) {
+                        continue;
+                    }
+                    activeTasks.incrementAndGet(); // Always incremented before putting in threadPool.
+                    threadPool.execute(new dfs(ch, node));
+                }
+            } finally {
+                if (activeTasks.decrementAndGet() == 0) {
+                    completionLatch.countDown(); // Signals API that execution is completed.
+                }
             }
         }
+    }
+
+    public class Node {
+        private String id;
+
+        public Node(String id) {
+            this.id = id;
+        }
+
+        public String getId() {
+            return this.id;
+        }
+
+        public void doWork() {
+            try {
+                Thread.sleep(200);
+                System.out.println("Node-" + this.id + "is working...");
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
+            }
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o)
+                return true;
+            if (!(o instanceof Node))
+                return false;
+            Node node = (Node) o;
+            return this.id.equals(node.id);
+        }
+
+        @Override
+        public int hashCode() {
+            return this.id.hashCode();
+        }
+
     }
 }
