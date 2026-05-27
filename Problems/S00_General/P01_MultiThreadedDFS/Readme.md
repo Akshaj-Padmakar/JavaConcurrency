@@ -1,15 +1,198 @@
-# S00 | P01 | MultiThreaded DFS.
+# MultiThreadedDFS Notes
 
-- Given a Directed/Undirected Graph, we want to visit all the nodes using the Depth first search algorithm using multiple threads.
+## Core Idea
 
-## Solution.
+Parallel graph traversal using:
 
-### Method 1 :
+- `ExecutorService` → task execution
+- `AtomicInteger` → active task reference counting
+- `CountDownLatch` → completion signaling
+- `synchronized(vis)` → atomic visited check + mark
 
-- Spawning new threads for each new DFS, is an ok solution, but this will expload as soon as graph gets larger.
-- Spawning new threads required it's own Thread stack which could by default be of size as large as 1 MB.
+This is not strict DFS ordering. It is **parallel graph exploration with DFS-style recursion**.
 
-### Method 2 :
+---
 
-- Keeping a threadPool and submitting runnables to it seems like the best solution.
-- We need to keep in mind if 2 nodes are called at the same time from different parent nodes, we need shared memory to ensure multiple DFS for same nodes are not called, since this could explode the DFS runtime way more than [O(n + m), n = number of nodes m = number of edges]
+## Design Pattern: Reference Counting
+
+Problem:
+
+Recursive tasks dynamically submit more tasks.
+
+Simple:
+
+```java
+shutdown();
+awaitTermination();
+```
+
+is insufficient because child tasks are not known upfront.
+
+Solution:
+
+Use **reference counting**.
+
+### Rule
+
+Before submitting a task:
+
+```java
+activeTasks.incrementAndGet();
+```
+
+When task finishes:
+
+```java
+activeTasks.decrementAndGet();
+```
+
+Completion condition:
+
+```java
+activeTasks == 0
+```
+
+Then:
+
+```java
+completionLatch.countDown();
+```
+
+This pattern is useful for:
+
+- Recursive parallel algorithms
+- Dynamic task graphs
+- Tree / graph processing
+- Async fan-out workloads
+
+---
+
+## API:
+
+```java
+multiThreadedDFS(startNode)
+```
+
+---
+
+## Thread Pool Sizing
+
+### 1. CPU-bound work
+
+Example:
+
+- Computation
+- Parsing
+- Algorithms
+- No blocking
+
+Use:
+
+```text
+threads ≈ CPU cores
+```
+
+**Reason:**
+
+Extra threads:
+
+- context switching
+- cache contention
+- no throughput gain
+
+---
+
+### 2. I/O / Blocking work
+
+Example:
+
+- Sleep
+- Network
+- DB
+- Disk
+
+Approximation:
+
+```text
+Threads ≈ Cores × (1 + Wait / Compute)
+```
+
+Example:
+
+8 cores
+
+- wait = 200ms
+- compute = 20ms
+
+Then:
+
+```text
+8 × (1 + 10)
+≈ 88 threads
+```
+
+Reason:
+
+Blocked threads do not consume CPU.
+
+---
+
+## Graph Structure Matters
+
+Thread count is also bounded by available graph parallelism.
+
+### Chain
+
+```text
+1 -> 2 -> 3
+```
+
+Parallelism:
+
+```text
+1
+```
+
+Extra threads useless.
+
+### Wide graph
+
+```text
+      1
+    / | \
+   2  3  4
+```
+
+Higher concurrency.
+
+Useful threads roughly bounded by:
+
+- branching factor
+- frontier width
+
+---
+
+## Practical Rule
+
+For unknown workloads:
+
+CPU-heavy:
+
+```text
+threads = cores
+```
+
+Blocking / mixed:
+
+```text
+2×–4× cores
+```
+
+Then benchmark.
+
+Thread count should be driven by:
+
+- work type
+- blocking ratio
+- graph parallelism
+- contention
