@@ -1,4 +1,4 @@
-package Problems.S01_Classic.P01_BlockingQueue;
+package Problems.S01_Classic.P01_BlockingQueue.Test;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import Problems.S01_Classic.P01_BlockingQueue.BlockingQueue;
 
 //AI-TEST.
 public class BlockingQueueTest {
@@ -25,8 +27,10 @@ public class BlockingQueueTest {
 
     // helper asserts
     private static void assertTrue(boolean cond, String msg) {
-        if (!cond) throw new AssertionError("Assertion failed: " + msg);
+        if (!cond)
+            throw new AssertionError("Assertion failed: " + msg);
     }
+
     private static void assertEquals(Object a, Object b, String msg) {
         if (a == null ? b != null : !a.equals(b)) {
             throw new AssertionError("Assertion failed: " + msg + " — expected: " + b + ", actual: " + a);
@@ -290,7 +294,8 @@ public class BlockingQueueTest {
                             totalConsumed.incrementAndGet();
                         } else {
                             // if producers finished and queue is empty -> exit
-                            if (produced.getCount() == 0 && q.size() == 0) break;
+                            if (produced.getCount() == 0 && q.size() == 0)
+                                break;
                         }
                     }
                 } catch (InterruptedException e) {
