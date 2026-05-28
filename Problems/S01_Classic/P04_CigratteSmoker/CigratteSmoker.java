@@ -1,147 +1,250 @@
 package Problems.S01_Classic.P04_CigratteSmoker;
 
 import java.util.Random;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class CigratteSmoker {
-    private final Lock lock = new ReentrantLock();
-    private final Condition tobaccoCondition = lock.newCondition();
-    private final Condition paperCondition = lock.newCondition();
-    private final Condition matchesCondition = lock.newCondition();
-    private final Semaphore ready = new Semaphore(0);
-    
-    private int choice = -1; // choice = -1 -> not started, choice = -2 done.
+    private Lock lock = new ReentrantLock();
+    private Condition tobaccoPusherCondition = lock.newCondition();
+    private Condition tobaccoSmokerCondition = lock.newCondition();
+
+    private Condition matchesPusherCondition = lock.newCondition();
+    private Condition matchesSmokerCondition = lock.newCondition();
+
+    private Condition paperPusherCondition = lock.newCondition();
+    private Condition paperSmokerCondition = lock.newCondition();
 
     private final Random rnd = new Random();
 
-    private void doStop() {
-        choice = -2;
-        paperCondition.signal();
-        matchesCondition.signal();
-        tobaccoCondition.signal();
-    }
+    private boolean matches = false;
+    private boolean paper = false;
+    private boolean tobacco = false;
 
-    public class AgentRunnable implements Runnable {
-        public AgentRunnable() {}
+    private boolean stop = false;
 
-        @Override
-        public void run() {
-            try {
-                Thread.sleep(500);
-                ready.acquire(3);
-                lock.lock();
-                choice = rnd.nextInt(3);
-                System.out.println("Agent signalled choice = " + (choice));
-                if(choice == 0) {
-                    tobaccoCondition.signal();
-                } else if (choice == 1) {
-                    paperCondition.signal();
-                } else {
-                    matchesCondition.signal();
-                }
-            } catch(InterruptedException e) {
-                e.printStackTrace();    
-            } finally {
-                lock.unlock();
-            }
-        }
-    }
-
-    public class TobaccoRunnable implements Runnable { // This smoker need Tobacco
-        public TobaccoRunnable() {}
-        
+    private class AgentRunnable implements Runnable {
         @Override
         public void run() {
             lock.lock();
-            ready.release();
             try {
-                while(choice != 0) {
-                    tobaccoCondition.await();
-                    if(choice == -2) {
-                        return;
-                    }
+                int r = rnd.nextInt(3);
+
+                if (r == 0) { // No Tobacco
+                    matches = true;
+                    paper = true;
+                    matchesPusherCondition.signal();
+                    paperPusherCondition.signal();
+                    System.out.println("Agent has put Matches and Paper on the table.");
+                } else if (r == 1) { // No Matches
+                    tobacco = true;
+                    paper = true;
+                    tobaccoPusherCondition.signal();
+                    paperPusherCondition.signal();
+                    System.out.println("Agent has put Tobacco and Paper on the table.");
+                } else { // No Paper
+                    tobacco = true;
+                    matches = true;
+                    tobaccoPusherCondition.signal();
+                    matchesPusherCondition.signal();
+                    System.out.println("Agent has put Tobacco and Matches on the table.");
                 }
-                System.out.println("Smoker[without Tobacco] acquired Tobacco and started smoking.");
-                doStop();
-            } catch(InterruptedException e) {
-                e.printStackTrace();
             } finally {
                 lock.unlock();
             }
         }
     }
 
-    public class PaperRunnable implements Runnable {
-        public PaperRunnable() {}
-
+    private class TobaccoPusherRunnable implements Runnable {
         @Override
         public void run() {
             lock.lock();
-            ready.release();
             try {
-                while(choice != 1) {
-                    paperCondition.await();
-                    if(choice == -2) {
-                        return;
-                    }
+                while (!tobacco && stop == false) {
+                    tobaccoPusherCondition.await();
+
                 }
-                System.out.println("Smoker[without Paper] acquired Paper and started smoking.");
-                Thread.sleep(300);
-                doStop();
-            } catch(InterruptedException e) {
-                e.printStackTrace();
+                if (stop) {
+                    return;
+                }
+
+                if (paper) {
+                    matchesSmokerCondition.signal();
+                } else if (matches) {
+                    paperSmokerCondition.signal();
+                }
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
             } finally {
                 lock.unlock();
             }
         }
     }
 
-    public class MatchesRunnable implements Runnable {
-        public MatchesRunnable() {}
-
+    private class MatchesPusherRunnable implements Runnable {
         @Override
         public void run() {
             lock.lock();
-            ready.release();
             try {
-                while(choice != 2) {
-                    matchesCondition.await();
-                    if(choice == -2) {
-                        return;
-                    }
+                while (!matches && stop == false) {
+                    matchesPusherCondition.await();
                 }
-                System.out.println("Smoker[without Matches] acquired Matches and started smoking.");
-                Thread.sleep(300);
-                doStop();
-            } catch(InterruptedException e) {
-                e.printStackTrace();
+                if (stop) {
+                    return;
+                }
+
+                if (tobacco) {
+                    paperSmokerCondition.signal();
+                } else if (paper) {
+                    tobaccoSmokerCondition.signal();
+                }
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
             } finally {
                 lock.unlock();
             }
         }
     }
-    
+
+    private class PaperPusherRunnable implements Runnable {
+        @Override
+        public void run() {
+            lock.lock();
+            try {
+                while (!paper && stop == false) {
+                    paperPusherCondition.await();
+                }
+                if (stop) {
+                    return;
+                }
+
+                if (tobacco) {
+                    matchesSmokerCondition.signal();
+                } else if (matches) {
+                    tobaccoSmokerCondition.signal();
+                }
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    private class TobaccoSmokerRunnable implements Runnable {
+        @Override
+        public void run() {
+            lock.lock();
+            try {
+                while (!(paper && matches) && stop == false) {
+                    tobaccoSmokerCondition.await();
+                }
+                if (stop) {
+                    return;
+                }
+                System.out.println("Smoker with Tobacco have all the ingridents now ! ROLLING.......");
+                System.out.println("SMOKING.....");
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
+            } finally {
+                doFinally();
+            }
+        }
+    }
+
+    private class PaperSmokerRunnable implements Runnable {
+        @Override
+        public void run() {
+            lock.lock();
+            try {
+                while (!(tobacco && matches) && stop == false) {
+                    paperSmokerCondition.await();
+                }
+                if (stop) {
+                    return;
+                }
+                System.out.println("Smoker with Paper have all the ingridents now ! ROLLING.......");
+                System.out.println("SMOKING.....");
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
+            } finally {
+                doFinally();
+            }
+        }
+    }
+
+    private class MatchesSmokerRunnable implements Runnable {
+        @Override
+        public void run() {
+            lock.lock();
+            try {
+                while (!(tobacco && paper) && stop == false) {
+                    matchesSmokerCondition.await();
+                }
+                if (stop) {
+                    return;
+                }
+                System.out.println("Smoker with Matches have all the ingridents now ! ROLLING.......");
+                System.out.println("SMOKING.....");
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
+            } finally {
+                doFinally();
+            }
+        }
+    }
+
+    private void doFinally() {
+        paper = false;
+        tobacco = false;
+        matches = false;
+        stop = true;
+
+        tobaccoPusherCondition.signal();
+        tobaccoSmokerCondition.signal();
+
+        matchesPusherCondition.signal();
+        matchesSmokerCondition.signal();
+
+        paperPusherCondition.signal();
+        paperSmokerCondition.signal();
+        lock.unlock();
+    }
+
     public void solve() throws InterruptedException {
         Thread agentThread = new Thread(new AgentRunnable(), "Agent-Thread");
-        Thread tobaccoThread = new Thread(new TobaccoRunnable(), "Tobacco-Thread");
-        Thread paperThread = new Thread(new PaperRunnable(), "Paper-Thread");
-        Thread matchesThread = new Thread(new MatchesRunnable(), "Matches-Thread");
+        Thread tobaccoPusherThread = new Thread(new TobaccoPusherRunnable(), "Tobacco-Pusher-Thread");
+        Thread tobaccoSmokerThread = new Thread(new TobaccoSmokerRunnable(), "Tobacco-Smoker-Thread");
+
+        Thread matchPusherThread = new Thread(new MatchesPusherRunnable(), "Match-Pusher-Runnable");
+        Thread matchSmokerThread = new Thread(new MatchesSmokerRunnable(), "Match-Smoker-Thread");
+
+        Thread paperPusherThread = new Thread(new PaperPusherRunnable(), "Paper-Pusher-Runnable");
+        Thread paperSmokerThread = new Thread(new PaperSmokerRunnable(), "Paper-Smoker-Thread");
 
         agentThread.start();
-        tobaccoThread.start();
-        paperThread.start();
-        matchesThread.start();
+        tobaccoPusherThread.start();
+        tobaccoSmokerThread.start();
 
+        matchPusherThread.start();
+        matchSmokerThread.start();
 
+        paperPusherThread.start();
+        paperSmokerThread.start();
 
         agentThread.join();
-        tobaccoThread.join();
-        paperThread.join();
-        matchesThread.join();
+        tobaccoPusherThread.join();
+        tobaccoSmokerThread.join();
+
+        matchPusherThread.join();
+        matchSmokerThread.join();
+
+        paperPusherThread.join();
+        paperSmokerThread.join();
+
     }
+
     public static void main(String[] args) throws InterruptedException {
         new CigratteSmoker().solve();
     }
