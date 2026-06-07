@@ -59,7 +59,7 @@ public class HilzerBarbershop {
                     barberReady.put(customerId, true);
                     sofaMap.remove(customerId);
 
-                    System.out.println("Barber has starting cutting hair for customer-" + customerId);
+                    System.out.println("Barber" + this.id + "has starting cutting hair for customer-" + customerId);
 
                     condition.signal();
                 } catch (InterruptedException ex) {

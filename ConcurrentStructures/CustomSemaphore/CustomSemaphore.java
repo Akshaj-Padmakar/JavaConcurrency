@@ -1,4 +1,4 @@
-package CustomSemaphore;
+package ConcurrentStructures.CustomSemaphore;
 
 import java.util.ArrayDeque;
 import java.util.Queue;
@@ -6,7 +6,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-
 
 public class CustomSemaphore {
     private final Lock lock;
@@ -16,7 +15,7 @@ public class CustomSemaphore {
     private final boolean fair;
 
     public CustomSemaphore(int permits, boolean fair) {
-        if(permits < 0) {
+        if (permits < 0) {
             throw new IllegalArgumentException("Number of permits cannot be less than 0");
         }
         this.permits = permits;
@@ -28,14 +27,14 @@ public class CustomSemaphore {
 
     public void acquire() throws InterruptedException {
         lock.lockInterruptibly();
-        try{
-            if(permits > 0 && (!fair || waiters.isEmpty())){
+        try {
+            if (permits > 0 && (!fair || waiters.isEmpty())) {
                 permits--;
                 return;
             }
 
-            if(!fair) {
-                while(permits == 0){
+            if (!fair) {
+                while (permits == 0) {
                     nonFairCondition.await();
                 }
                 permits--;
@@ -43,18 +42,18 @@ public class CustomSemaphore {
             } else {
                 Node node = new Node(lock.newCondition());
                 waiters.add(node);
-                
-                while(true){
-                    if(permits > 0 && waiters.peek() == node){
-                        permits --;
+
+                while (true) {
+                    if (permits > 0 && waiters.peek() == node) {
+                        permits--;
                         waiters.poll();
                         return;
-                    } else{
+                    } else {
                         node.getCondition().await();
                     }
                 }
             }
-        } catch (InterruptedException e){
+        } catch (InterruptedException e) {
             e.printStackTrace();
         } finally {
             lock.unlock();
@@ -63,8 +62,8 @@ public class CustomSemaphore {
 
     public boolean tryAcquire() {
         lock.lock();
-        try{
-            if(permits > 0 && (!fair || waiters.isEmpty())){
+        try {
+            if (permits > 0 && (!fair || waiters.isEmpty())) {
                 permits--;
                 return true;
             } else {
@@ -80,15 +79,15 @@ public class CustomSemaphore {
         long deadline = nano + System.nanoTime();
 
         lock.lockInterruptibly();
-        try{
-            if(permits > 0 && (!fair || waiters.isEmpty())) {
+        try {
+            if (permits > 0 && (!fair || waiters.isEmpty())) {
                 permits--;
                 return true;
             }
 
-            if(!fair) {
-                while(permits == 0){
-                    if(nano <= 0L) {
+            if (!fair) {
+                while (permits == 0) {
+                    if (nano <= 0L) {
                         return false;
                     }
                     nano = nonFairCondition.awaitNanos(nano);
@@ -98,13 +97,13 @@ public class CustomSemaphore {
             } else {
                 Node node = new Node(lock.newCondition());
                 waiters.add(node);
-                while(true){
-                    if(permits > 0 && waiters.peek() == node){
+                while (true) {
+                    if (permits > 0 && waiters.peek() == node) {
                         permits--;
                         waiters.poll();
                         return true;
                     } else {
-                        if(nano <= 0L) {
+                        if (nano <= 0L) {
                             waiters.remove(node);
                             return false;
                         }
@@ -120,13 +119,13 @@ public class CustomSemaphore {
     public void release() {
         lock.lock();
 
-        try{
+        try {
             permits++;
-            if(fair){
+            if (fair) {
                 Node node = waiters.peek();
-                if(node != null){
+                if (node != null) {
                     node.getCondition().signal();
-                } 
+                }
             } else {
                 nonFairCondition.signal();
             }
@@ -137,7 +136,7 @@ public class CustomSemaphore {
 
     public int availablePermits() {
         lock.lock();
-        try{
+        try {
             return permits;
         } finally {
             lock.unlock();
@@ -147,7 +146,8 @@ public class CustomSemaphore {
     private class Node {
         private Condition condition;
         boolean released = false; // stores whether the current Node is release/ allowed to proceed.
-        public Node(Condition condition){
+
+        public Node(Condition condition) {
             this.condition = condition;
         }
 
