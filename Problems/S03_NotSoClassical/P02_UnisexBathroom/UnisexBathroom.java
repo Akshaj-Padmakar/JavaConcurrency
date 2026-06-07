@@ -236,21 +236,11 @@ public class UnisexBathroom {
         public MenRunnable(int id) {
             super(id, TYPE.MEN);
         }
-
-        @Override
-        public void run() {
-            super.run();
-        }
     }
 
     private class WomenRunnable extends GenderRunnable {
         public WomenRunnable(int id) {
             super(id, TYPE.WOMEN);
-        }
-
-        @Override
-        public void run() {
-            super.run();
         }
     }
 
