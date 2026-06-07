@@ -109,11 +109,6 @@ public class SearchInsertDeleteListTest {
         }
     }
 
-    private static Void call(ThrowingRunnable action) throws Exception {
-        action.run();
-        return null;
-    }
-
     private static void emptySearchReturnsFalse() throws Exception {
         SearchInsertDeleteList<Integer> list = newList();
         assertFalse(list.search(10), "search on empty list should return false");
