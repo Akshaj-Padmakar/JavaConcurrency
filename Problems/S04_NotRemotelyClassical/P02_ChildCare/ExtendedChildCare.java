@@ -1,37 +1,92 @@
 package Problems.S04_NotRemotelyClassical.P02_ChildCare;
 
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 import java.util.Random;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class ChildCare {
+/*
+* In this problem there are 2 school of thoughts:
+    1. Allow adults to exit over allowing new child entry:
+    -----------------------------------------------------
+        * Adult threads would never stave.
+        * And once requested to leave, they will eventually leave.
+        * chaning the child entry condition fro,
+            * childCnt < 3 * adultCnt => childCnt < 3 * (adultCnt - adultWaitingToLeave)
+            * Once adult wants to leave don't allow new children...
+    
+    
+    2. Allow children to enter whenever possible
+    --------------------------------------------
+        * Current solution do this...
+        * Better utilization of day care center....
+        * But adult threads can starve -> Thoese wanting to leave may never be able to leave...
+    
+ */
+public class ExtendedChildCare {
+
     private final int N; // Number of adults.
     private final int M; // Number of childern.
 
-    public ChildCare(int N, int M) {
+    public ExtendedChildCare(int N, int M) {
         this.N = N;
         this.M = M;
     }
 
     private final Lock lock = new ReentrantLock();
-    private final Condition adultExitCondition = lock.newCondition();
-    private final Condition childEntryCondition = lock.newCondition();
+    private final Queue<Node> adultExitQueue = new LinkedList<>();
+    private final Queue<Node> childEntryQueue = new LinkedList<>();
 
     private int adultCnt = 0;
     private int childCnt = 0;
 
+    private static final int CHILD_TO_ADULT_RATIO = 3;
+
     private Random rnd = new Random();
 
-    public abstract class ChildCareRunnable implements Runnable {
-        public int id;
-        private String type;
+    private class Node {
+        private final int id;
+        private final String type;
+        private final Condition condition;
 
-        public ChildCareRunnable(int id, String type) {
+        public Node(int id, String type) {
             this.id = id;
             this.type = type;
+            this.condition = lock.newCondition();
+        }
+
+        public int getId() {
+            return id;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public Condition getCondition() {
+            return condition;
+        }
+    }
+
+    public abstract class ChildCareRunnable implements Runnable {
+        public Node node;
+
+        public ChildCareRunnable(int id, String type) {
+            this.node = new Node(id, type);
+        }
+
+        @Override
+        public void run() {
+            enter();
+
+            stay();
+
+            exit();
         }
 
         abstract void enter();
@@ -40,17 +95,36 @@ public class ChildCare {
 
         abstract void exit();
 
+        public void signalExitingAdultNode() {
+            Node exitingAdultNode = adultExitQueue.peek();
+            exitingAdultNode.getCondition().signal();
+        }
+
+        public void singalKChildNode(int k) {
+            if (k > 1) {
+                List<Node> signalChildren = peekFirstK(childEntryQueue, k);
+                for (Node child : signalChildren) {
+                    child.getCondition().signal();
+                }
+            } else if (k == 1) {
+                Node childEntryNode = childEntryQueue.peek();
+                childEntryNode.getCondition().signal();
+            }
+        }
+
         private void logChildCareClosed() {
             System.out.println("Child-Care is closed now...");
         }
 
         private void logEntry() {
-            System.out.println(type + "-" + this.id + " has entered the Child care, AdultCnt = " + adultCnt
+            System.out.println(this.node.getType() + "-" + this.node.getId()
+                    + " has entered the Child care, AdultCnt = " + adultCnt
                     + ", ChildCnt = " + childCnt);
         }
 
         private void logExit() {
-            System.out.println(type + "-" + this.id + " has exited the Child care, AdultCnt = " + adultCnt
+            System.out.println(this.node.getType() + "-" + this.node.getId()
+                    + " has exited the Child care, AdultCnt = " + adultCnt
                     + ", ChildCnt = " + childCnt);
         }
 
@@ -63,25 +137,18 @@ public class ChildCare {
         }
 
         @Override
-        public void run() {
-            enter();
-
-            stay();
-
-            exit();
-        }
-
-        @Override
         public void enter() {
             boolean locked = false;
             try {
                 lock.lockInterruptibly();
                 locked = true;
                 adultCnt++;
-
-                childEntryCondition.signalAll(); // Prefer child entry -> Increase day care efficiency.
-                adultExitCondition.signalAll();
-
+                if (childEntryQueue.size() > 0) { // Prefer child entry -> Increase day care efficiency.
+                    singalKChildNode(CHILD_TO_ADULT_RATIO);
+                }
+                if (adultExitQueue.size() > 0) {
+                    signalExitingAdultNode();
+                }
                 super.logEntry();
             } catch (InterruptedException ex) {
                 super.logChildCareClosed();
@@ -107,9 +174,11 @@ public class ChildCare {
             try {
                 lock.lockInterruptibly();
                 locked = true;
-                while (3 * (adultCnt - 1) < childCnt) {
-                    adultExitCondition.await();
+                adultExitQueue.add(this.node);
+                while (CHILD_TO_ADULT_RATIO * (adultCnt - 1) < childCnt) {
+                    this.node.getCondition().await();
                 }
+                adultExitQueue.poll();
                 adultCnt--;
                 super.logExit();
             } catch (InterruptedException ex) {
@@ -128,23 +197,16 @@ public class ChildCare {
         }
 
         @Override
-        public void run() {
-            enter();
-
-            stay();
-
-            exit();
-        }
-
-        @Override
         public void enter() {
             boolean locked = false;
             try {
                 lock.lockInterruptibly();
                 locked = true;
-                while (childCnt + 1 > 3 * adultCnt) {
-                    childEntryCondition.await();
+                childEntryQueue.add(this.node);
+                while (childCnt + 1 > CHILD_TO_ADULT_RATIO * adultCnt) {
+                    this.node.getCondition().await();
                 }
+                childEntryQueue.poll();
                 childCnt++;
                 super.logEntry();
             } catch (InterruptedException ex) {
@@ -173,8 +235,12 @@ public class ChildCare {
                 locked = true;
                 childCnt--;
 
-                childEntryCondition.signalAll();
-                adultExitCondition.signalAll();
+                if (childEntryQueue.size() > 0) {
+                    singalKChildNode(1);
+                }
+                if (adultExitQueue.size() > 0) {
+                    signalExitingAdultNode();
+                }
 
                 super.logExit();
             } catch (InterruptedException ex) {
@@ -186,6 +252,17 @@ public class ChildCare {
             }
         }
 
+    }
+
+    private List<Node> peekFirstK(Queue<Node> queue, int k) {
+        List<Node> ret = new ArrayList<>();
+        Iterator<Node> it = queue.iterator();
+        int i = 0;
+        while (i < k && it.hasNext()) {
+            ret.add(it.next());
+            i++;
+        }
+        return ret;
     }
 
     public void solve() throws InterruptedException {
@@ -228,7 +305,7 @@ public class ChildCare {
     public static void main(String[] args) throws InterruptedException {
         int N = 2;
         int M = 12;
-        new ChildCare(N, M).solve();
+        new ExtendedChildCare(N, M).solve();
     }
 
 }
