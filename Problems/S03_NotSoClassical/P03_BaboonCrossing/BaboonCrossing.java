@@ -11,219 +11,200 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class BaboonCrossing {
-    private final int N; // Number of left Babons.
-    private final int M; // Number of right Babons.
-    
-    private Random rnd = new Random();
+    private final int N; // Left crossing babon count
+    private final int M; // Right crossing babon count
+
     public BaboonCrossing(int N, int M) {
         this.N = N;
         this.M = M;
     }
 
-    private Lock lock = new ReentrantLock();
-    
     public enum DIR {
         NONE, LEFT, RIGHT;
     }
-    
-    private DIR currentDir = DIR.NONE;
-    private int currentCnt = 0;
-    private int batchCnt = 0;
-    private int MAX_CNT = 5;
-    private int BATCH_SIZE = 6;
 
+    private Lock lock = new ReentrantLock();
 
     private class Node {
-        private int id;
-        private DIR dir;
-        private Condition condition;
+        private final int id;
+        private final DIR dir;
+        private final Condition condition;
+
         public Node(int id, DIR dir) {
             this.id = id;
             this.dir = dir;
+            this.condition = lock.newCondition();
+        }
+
+        public Condition getCondition() {
+            return condition;
+        }
+
+        public DIR getDir() {
+            return dir;
         }
     }
 
-    private Queue<Node> leftWaiting = new LinkedList<>();
-    private Queue<Node> rightWaiting = new LinkedList<>();
+    private int currentBabonCnt = 0;
+    private int onRopeBabonCnt = 0;
+    private DIR currentDir = DIR.NONE;
 
-    public class LeftBaboonRunnable implements Runnable {
-        private final int id;
-        public LeftBaboonRunnable(int id) {
-            this.id = id;
+    private final int MAX_CAPACITY = 5;
+    private final int BATCH_SIZE = 10;
+
+    private Queue<Node> leftBabonQueue = new LinkedList<>();
+    private Queue<Node> rightBabonQueue = new LinkedList<>();
+
+    private Random rnd = new Random();
+
+    public abstract class Babon implements Runnable {
+        private Node node;
+
+        public Babon(int id, DIR dir) {
+            if (dir != DIR.LEFT && dir != DIR.RIGHT) {
+                throw new IllegalStateException("Dir is invalid.");
+            }
+            this.node = new Node(id, dir);
         }
 
-        @Override
+        private int glidingTime() {
+            return 300 + rnd.nextInt(100);
+        }
+
         public void run() {
+            enterRope();
+
+            glideOnRope();
+
+            exitRope();
+        }
+
+        private void enterRope() {
             lock.lock();
-            
-            Node node = new Node(this.id, DIR.LEFT);
-            node.condition = lock.newCondition();
-            leftWaiting.add(node);
-            
+            Queue<Node> directionQueue = getDirectionQueue();
+            directionQueue.add(this.node);
             try {
-                while(!allowLeft()) {
-                    node.condition.await();
+                while (!allow()) {
+                    this.node.getCondition().await();
                 }
-                currentDir = DIR.LEFT;
-                currentCnt++;
-                batchCnt++;
-                leftWaiting.poll();
-                
-                System.out.println("Left-Baboon-" + this.id + " has entered on the rope");
-            } catch(InterruptedException e) {
-                e.printStackTrace();
+                directionQueue.poll();
+                currentDir = this.node.getDir();
+                currentBabonCnt++;
+                onRopeBabonCnt++;
+
+                logRopeEntry();
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
             } finally {
                 lock.unlock();
             }
+        }
 
+        private void glideOnRope() {
+            logGlidOnRope();
             try {
-                Thread.sleep(rnd.nextInt(300));
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+                Thread.sleep(glidingTime());
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
             }
-            
+        }
+
+        private void exitRope() {
             lock.lock();
+            onRopeBabonCnt--;
+            logRopeExit();
             try {
-                currentCnt--;
-                if(batchCnt == BATCH_SIZE) {
-                    if(currentCnt == 0) {
-                        batchCnt = 0;
-                        currentDir = DIR.NONE;
-                        if(rightWaiting.size() > 0) {
-                            List<Node>rightSignal = peekFirstK(rightWaiting, MAX_CNT);
-                            for(Node rNode : rightSignal) {
-                                rNode.condition.signal();
-                            }
+                if (currentBabonCnt == BATCH_SIZE) {
+                    if (onRopeBabonCnt == 0) { // We switch to the other direction
+                        if (getOtherDirectionQueue().size() > 0) {
+                            signalOtherDirectionBabon();
                         } else {
-                            // no right babon waiting, signal more left baboon to go.
-                            List<Node> leftSignal = peekFirstK(leftWaiting, MAX_CNT);
-                            for(Node lNode : leftSignal) {
-                                lNode.condition.signal();
+                            currentBabonCnt = 0;
+                            currentDir = this.node.getDir();
+
+                            List<Node> signalThisDirectionBabon = peekFirstK(getDirectionQueue(), MAX_CAPACITY);
+                            for (Node thisDirNode : signalThisDirectionBabon) {
+                                thisDirNode.getCondition().signal();
                             }
                         }
-                    } else {
-                        // lets wait for the last baboon to cross.
+                    } else { // wait for the last babon to cross for switching...
                     }
                 } else {
-                    if(leftWaiting.size() > 0) {
-                        Node lNode = leftWaiting.peek();
-                        lNode.condition.signal();
-                    }else {
-                        if(currentCnt == 0) {
-                            batchCnt = 0;
-                            currentDir = DIR.NONE;
-                            List<Node> rightSignal = peekFirstK(rightWaiting, MAX_CNT);
-                            for(Node rNode : rightSignal) {
-                                rNode.condition.signal();
-                            }
+                    if (getDirectionQueue().size() == 0) {
+                        if (onRopeBabonCnt == 0) {
+                            signalOtherDirectionBabon();
                         }
+                    } else {
+
+                        Node nxtNode = getDirectionQueue().peek();
+
+                        nxtNode.getCondition().signal();
                     }
                 }
-                System.out.println("Left-Baboon-" + this.id + " has reached its destination.");
             } finally {
                 lock.unlock();
             }
         }
 
-        private boolean allowLeft() {
-            if(currentDir == DIR.NONE) {
+        private Queue<Node> getDirectionQueue() {
+            return this.node.getDir() == DIR.LEFT ? leftBabonQueue : rightBabonQueue;
+        }
+
+        private Queue<Node> getOtherDirectionQueue() {
+            return this.node.getDir() == DIR.LEFT ? rightBabonQueue : leftBabonQueue;
+        }
+
+        private DIR getOtherDirection() {
+            return this.node.getDir() == DIR.LEFT ? DIR.RIGHT : DIR.LEFT;
+        }
+
+        private boolean allow() {
+            if (currentDir == DIR.NONE || (currentDir == this.node.getDir() && onRopeBabonCnt < MAX_CAPACITY
+                    && currentBabonCnt < BATCH_SIZE)) {
                 return true;
-            } else if (currentDir == DIR.LEFT && currentCnt < MAX_CNT && batchCnt < BATCH_SIZE) {
-                return true;
-            } else {
-                return false;
             }
+            return false;
+        }
+
+        private void signalOtherDirectionBabon() {
+            currentDir = getOtherDirection();
+            currentBabonCnt = 0;
+            List<Node> signalOtherDirectionBabon = peekFirstK(getOtherDirectionQueue(), MAX_CAPACITY);
+            for (Node otherDirNode : signalOtherDirectionBabon) {
+                otherDirNode.getCondition().signal();
+            }
+        }
+
+        private void logRopeEntry() {
+            System.out.println("Babaon with direction = " + this.node.getDir().toString() + " and id = " + this.node.id
+                    + " has entered on the rope");
+        }
+
+        private void logGlidOnRope() {
+            System.out.println("Babaon with direction = " + this.node.getDir().toString() + " and id = " + this.node.id
+                    + " is now gliding on the rope........");
+        }
+
+        private void logRopeExit() {
+            System.out.println("Babaon with direction = " + this.node.getDir().toString() + " and id = " + this.node.id
+                    + " is leaving the rope.");
         }
     }
 
-    public class RightBaboonRunnable implements Runnable {
-        private final int id;
-        public RightBaboonRunnable(int id) {
-            this.id = id;
-        }
-
-        @Override
-        public void run() {
-            lock.lock();
-            Node node = new Node(this.id, DIR.RIGHT);
-            node.condition = lock.newCondition();
-            rightWaiting.add(node);
-            try {
-                while(!allowRight()){
-                    node.condition.await();
-                }   
-                currentCnt++;
-                batchCnt++;
-                currentDir = DIR.RIGHT;
-                rightWaiting.poll();
-
-                System.out.println("Right-Baboon-" + this.id + " has entered the rope.");
-            } catch(InterruptedException e) {
-                e.printStackTrace();
-            } finally {
-                lock.unlock();
-            }
-
-            try {
-                Thread.sleep(rnd.nextInt(300));
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-
-            lock.lock();
-            try {
-                currentCnt--;
-                if(batchCnt == BATCH_SIZE) {
-                    if(currentCnt == 0) {
-                        batchCnt = 0;
-                        currentDir = DIR.NONE;
-                        if(leftWaiting.size() > 0) {
-                            List<Node> leftSignal = peekFirstK(leftWaiting, MAX_CNT);
-                            for(Node lNode : leftSignal) {
-                                lNode.condition.signal();
-                            }
-                        } else {
-                            List<Node> rightSignal = peekFirstK(rightWaiting, MAX_CNT);
-                            for(Node rNode : rightSignal) {
-                                rNode.condition.signal();
-                            }
-                        }
-                    } else {
-                        // let the last thread handle.
-                    }
-                } else {
-                    if(rightWaiting.size() > 0) {
-                        Node rNode = rightWaiting.peek();
-                        rNode.condition.signal();
-                    } else {
-                        if(currentCnt == 0) {
-                            batchCnt = 0;
-                            currentDir = DIR.NONE;
-                            List<Node> leftSignal = peekFirstK(leftWaiting, MAX_CNT);
-                            for(Node lNode : leftSignal) {
-                                lNode.condition.signal();
-                            }
-                        }
-                    }
-                }
-                System.out.println("Right-Baboon-" + this.id + " has reached its destination.");
-            } finally {
-                lock.unlock();
-            }
-        }
-
-        private boolean allowRight() {
-            if(currentDir == DIR.NONE) {
-                return true;
-            } else if (currentDir == DIR.RIGHT && currentCnt < MAX_CNT && batchCnt < BATCH_SIZE) {
-                return true;
-            } else {
-                return false;
-            }
+    private class RightDirBabonRunnable extends Babon {
+        public RightDirBabonRunnable(int id) {
+            super(id, DIR.RIGHT);
         }
     }
 
+    private class LeftDirBabonRunnable extends Babon {
+        public LeftDirBabonRunnable(int id) {
+            super(id, DIR.LEFT);
+        }
 
+    }
+
+    // helper: peek first K entries from queue without removing
     private List<Node> peekFirstK(Queue<Node> queue, int k) {
         List<Node> ret = new ArrayList<>();
         Iterator<Node> it = queue.iterator();
@@ -235,38 +216,39 @@ public class BaboonCrossing {
         return ret;
     }
 
-
     public void solve() throws InterruptedException {
-        List<Thread> left = new ArrayList<>();
-        List<Thread> right = new ArrayList<>();
+        List<Thread> rightDirBabon = new ArrayList<>();
+        List<Thread> leftDirBabon = new ArrayList<>();
 
-        for(int i = 0; i < this.N; i++) {
-            left.add(new Thread(new LeftBaboonRunnable(i), "Left-Baboon-Thread-" + i));
-        }
-        for(int i = 0; i < this.M; i++) {
-            right.add(new Thread(new RightBaboonRunnable(i), "Right-Baboon-Thread-" + i));
+        for (int i = 0; i < this.N; i++) {
+            rightDirBabon.add(new Thread(new RightDirBabonRunnable(i), "Right-Dir-Babon-Thread-" + i));
         }
 
-        for(Thread t : left) {
+        for (int i = 0; i < this.M; i++) {
+            leftDirBabon.add(new Thread(new LeftDirBabonRunnable(i), "Left-Dir-Babob-Thread-" + i));
+        }
+
+        for (Thread t : rightDirBabon) {
             t.start();
         }
-        for(Thread t : right) {
+
+        for (Thread t : leftDirBabon) {
             t.start();
         }
 
-        for(Thread t : left) {
+        for (Thread t : rightDirBabon) {
             t.join();
         }
 
-        for(Thread t : right) {
+        for (Thread t : leftDirBabon) {
             t.join();
         }
     }
-
 
     public static void main(String[] args) throws InterruptedException {
-        int N = 10;
-        int M = 10;
+        int N = 21;
+        int M = 17;
         new BaboonCrossing(N, M).solve();
     }
+
 }
