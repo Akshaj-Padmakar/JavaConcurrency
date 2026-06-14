@@ -1,4 +1,4 @@
-package DinningHallProblem;
+package Problems.S04_NotRemotelyClassical.P06_DinningHall;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,10 +16,11 @@ public class DinningHall {
     private int waiting = 0;
     private boolean alone = true;
     private int wantingToLeave = 0;
-    
+
     public class StudentRunnable implements Runnable {
         private int id;
-        public StudentRunnable(int id){
+
+        public StudentRunnable(int id) {
             this.id = id;
         }
 
@@ -30,7 +31,7 @@ public class DinningHall {
                 dine();
                 Thread.sleep(rnd.nextInt(1000));
                 leave();
-            } catch(InterruptedException e) {
+            } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         }
@@ -39,11 +40,12 @@ public class DinningHall {
             lock.lock();
             try {
                 waiting++;
-                System.out.println("Student-" + this.id + " is trying to enter, waiting = " + waiting + " inside = " + inside);
-                if(waiting > 1) {
+                System.out.println(
+                        "Student-" + this.id + " is trying to enter, waiting = " + waiting + " inside = " + inside);
+                if (waiting > 1) {
                     alone = false;
                 }
-                while(alone) {
+                while (alone) {
                     aloneDinning.await();
                 }
                 alone = false;
@@ -60,9 +62,10 @@ public class DinningHall {
             lock.lock();
             try {
                 wantingToLeave++;
-                System.out.println("Student-" + this.id + " wants to leave, wantingToLeave = " + wantingToLeave + " inside = " + inside);
-                if(inside == 2) {
-                    if(wantingToLeave <= 1) {
+                System.out.println("Student-" + this.id + " wants to leave, wantingToLeave = " + wantingToLeave
+                        + " inside = " + inside);
+                if (inside == 2) {
+                    if (wantingToLeave <= 1) {
                         leaveCondition.await();
                     }
 
@@ -70,27 +73,30 @@ public class DinningHall {
                 }
                 wantingToLeave--;
                 inside--;
-                if(inside == 0){
+                if (inside == 0) {
                     alone = true;
                 }
-                System.out.println("Student-" + this.id + " has left, wantingToLeave = " + wantingToLeave + " inside = " + inside);
+                System.out.println(
+                        "Student-" + this.id + " has left, wantingToLeave = " + wantingToLeave + " inside = " + inside);
             } finally {
                 lock.unlock();
             }
         }
     }
+
     public void solve(int students) throws InterruptedException {
         List<Thread> studentThreads = new ArrayList<>();
-        for(int i = 0; i < students; i++){
+        for (int i = 0; i < students; i++) {
             studentThreads.add(new Thread(new StudentRunnable(i), "Student-Thread-" + i));
         }
-        for(Thread t : studentThreads) {
+        for (Thread t : studentThreads) {
             t.start();
         }
-        for(Thread t : studentThreads) {
+        for (Thread t : studentThreads) {
             t.join();
         }
     }
+
     public static void main(String[] args) throws InterruptedException {
         int students = 2;
         new DinningHall().solve(students);
