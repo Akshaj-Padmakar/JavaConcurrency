@@ -2,6 +2,9 @@ package Problems.S01_Classic.P02_ReadWriteLock;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /* 
  * Conditions for Lock:
@@ -13,102 +16,116 @@ import java.util.Map;
 */
 
 public class ReadWriteLock {
-    private final Map<Thread, Integer> readingThread;
-    private int writingRequest = 0;
-    private int writeCnt = 0;
+    private final Map<Thread, Integer> readingThreads;
     private Thread writer = null;
+    private int writerRequest = 0;
+    private int writerCnt = 0;
+
+    private Lock lock = new ReentrantLock();
+    private Condition readWaitCondition = lock.newCondition();
+    private Condition writeWaitCondition = lock.newCondition();
 
     public ReadWriteLock() {
-        this.readingThread = new HashMap<>();
+        this.readingThreads = new HashMap<>();
     }
 
-    public synchronized void readLock() throws InterruptedException {
-        Thread thread = Thread.currentThread();
-
-        while(!grantReadAccess(thread)) {
-            this.wait();
-        }
-
-        Integer cnt = readingThread.get(thread);
-        if(cnt == null) {
-            cnt = 0;
-        }
-        cnt++;
-        readingThread.put(thread, cnt);
-    }
-
-    public synchronized void readUnlock() throws IllegalMonitorStateException {
-        Thread thread = Thread.currentThread();
-
-        Integer cnt = readingThread.get(thread);
-        if(cnt == null) {
-            throw new IllegalMonitorStateException("This thread doesnt hold the readLock, cannot unlock !");
-        }
-        cnt--;
-        if(cnt == 0) {
-            readingThread.remove(thread);
-            this.notifyAll();
-        } else {
-            readingThread.put(thread, cnt);
+    public void readLock() throws InterruptedException {
+        lock.lock();
+        try {
+            Thread thread = Thread.currentThread();
+            while (!grantReadAccess(thread)) {
+                readWaitCondition.await();
+            }
+            Integer cnt = readingThreads.get(thread);
+            if (cnt == null) {
+                cnt = 0;
+            }
+            cnt++;
+            readingThreads.put(thread, cnt);
+        } finally {
+            lock.unlock();
         }
     }
 
-    public synchronized void writeLock() throws InterruptedException {
-        Thread thread = Thread.currentThread();
-        writingRequest++;
-        while(!grantWriteAccess(thread)) {
-            this.wait();
-
+    public void readUnlock() {
+        lock.lock();
+        try {
+            Thread thread = Thread.currentThread();
+            Integer cnt = readingThreads.get(thread);
+            if (cnt == null) {
+                throw new IllegalMonitorStateException("This thread doesnot hold the read-lock, cannot unlock !");
+            }
+            cnt--;
+            if (cnt == 0) {
+                readingThreads.remove(thread);
+                writeWaitCondition.signal();
+            } else {
+                readingThreads.put(thread, cnt);
+            }
+        } finally {
+            lock.unlock();
         }
-        writingRequest--;
-        writer = thread;
-        writeCnt++;
     }
 
-    public synchronized void writeUnlock() throws IllegalMonitorStateException {
-        Thread thread = Thread.currentThread();
-        if(writer != thread) {
-            throw new IllegalMonitorStateException("This thread doesnt hold the write lock");
+    public void writeLock() throws InterruptedException {
+        lock.lock();
+        try {
+            Thread thread = Thread.currentThread();
+            writerRequest++;
+            try {
+                while (!grantWriteAccess(thread)) {
+                    writeWaitCondition.await();
+                }
+            } finally {
+                writerRequest--;
+            }
+            writer = thread;
+            writerCnt++;
+        } finally {
+            lock.unlock();
         }
+    }
 
-        writeCnt--;
-        if(writeCnt == 0) {
-            writer = null;
-            this.notifyAll();
+    public void writeUnlock() {
+        lock.lock();
+        try {
+            Thread thread = Thread.currentThread();
+            if (writer != thread) {
+                throw new IllegalMonitorStateException("This Thread doesnot hold the write-lock, cannot unlock !");
+            }
+            writerCnt--;
+            if (writerCnt == 0) {
+                writer = null;
+                writeWaitCondition.signal();
+                readWaitCondition.signalAll();
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
     private boolean grantReadAccess(Thread thread) {
-        if(writer != null) { // writer-to-read reentrance
+        if (writer != null) {
             return writer == thread;
-        } else {
-            if(readingThread.get(thread) != null) { // read-to-read reentrance
-                return true;
-            } else if(writingRequest > 0) {
-                return false;
-            }
-
+        }
+        if (readingThreads.get(thread) != null) {
             return true;
+        } else {
+            return writerRequest == 0;
         }
     }
 
     private boolean grantWriteAccess(Thread thread) {
-        if(writer != null) {
-            return writer == thread; // writer-to-write reentrance
-        } else {
-            if(readingThread.size() == 0) {
-                return true;
-            } else if(readingThread.size() == 1) { // read-to-write reentrance[only when this is the only reading thread]
-                return readingThread.containsKey(thread);
-            } else {
-                return false;
-            }
+        if (writer != null) {
+            return writer == thread;
         }
-    }
 
-    
-    public static void main(String[] args) throws InterruptedException {
-
+        if (readingThreads.size() == 0) {
+            return true;
+        } else if (readingThreads.size() == 1) {
+            return readingThreads.containsKey(thread);
+        }
+        return false;
     }
 
 }

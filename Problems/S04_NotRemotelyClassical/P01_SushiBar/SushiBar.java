@@ -11,104 +11,131 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class SushiBar {
-    private final int N; // Number of customers
+    private final int N; // Number of Customers
 
     public SushiBar(int N) {
         this.N = N;
     }
 
     private final Lock lock = new ReentrantLock();
-    private boolean partying = false; // Bar full ?
 
+    private final Queue<Node> waitingList = new LinkedList<>();
+
+    private boolean partying = false;
     private int insideCnt = 0;
+
     private final int MAX_CAPACITY = 5;
 
+    private final Random rnd = new Random();
+
     private class Node {
-        private int id;
-        private Condition condition;
+        private final int id;
+        private final Condition condition;
 
-        public Node(int id) {
+        private Node(int id) {
             this.id = id;
-            condition = lock.newCondition();
+            this.condition = lock.newCondition();
         }
 
-        public int getId() {
-            return id;
+        private int getId() {
+            return this.id;
         }
 
-        public Condition getCondition() {
-            return condition;
+        private Condition getCondition() {
+            return this.condition;
         }
     }
 
-    Queue<Node> waitingCustomers = new LinkedList<>();
-
-    private Random rnd = new Random();
-
     private class CustomerRunnable implements Runnable {
-        private Node node;
+        private final Node node;
 
         public CustomerRunnable(int id) {
             this.node = new Node(id);
         }
 
-        private int dinningTime() {
-            return 300 + rnd.nextInt(300);
-        }
-
         @Override
         public void run() {
-            enter();
+            if (!enter()) {
+                return;
+            }
 
             dineIn();
 
             exit();
         }
 
-        private void enter() {
+        private boolean enter() {
             lock.lock();
-            waitingCustomers.add(this.node);
             try {
-                while (partying || waitingCustomers.peek() != node || insideCnt == MAX_CAPACITY) {
+                waitingList.add(this.node);
+                while (partying || waitingList.peek() != this.node || insideCnt == MAX_CAPACITY) {
                     this.node.getCondition().await();
                 }
-                waitingCustomers.poll();
+                waitingList.poll();
                 insideCnt++;
                 if (insideCnt == MAX_CAPACITY) {
                     partying = true;
                 }
                 logEntry();
+                return true;
             } catch (InterruptedException ex) {
+                // Interruption on await
+                waitingList.remove(this.node);
+                if (!waitingList.isEmpty()) {
+                    waitingList.peek().getCondition().signal();
+                }
                 ex.printStackTrace();
+                Thread.currentThread().interrupt();
+                return false;
             } finally {
                 lock.unlock();
             }
         }
 
         private void dineIn() {
-            logDinning();
             try {
                 Thread.sleep(dinningTime());
             } catch (InterruptedException ex) {
                 ex.printStackTrace();
+                Thread.currentThread().interrupt();
             }
         }
 
         private void exit() {
             lock.lock();
-            insideCnt--;
             try {
-                if (partying && insideCnt == 0) {
+                insideCnt--;
+                logExit();
+                if (insideCnt == 0 && partying) {
                     partying = false;
-                    List<Node> nxtCustomers = peekFirstK(waitingCustomers, MAX_CAPACITY);
-                    for (Node customer : nxtCustomers) {
-                        customer.getCondition().signal();
+                    List<Node> nxtCustomers = peekFirstK(waitingList, MAX_CAPACITY);
+                    for (Node node : nxtCustomers) {
+                        node.getCondition().signal();
                     }
                 }
-                logExit();
             } finally {
                 lock.unlock();
             }
+        }
+
+        private int dinningTime() {
+            return 200 + rnd.nextInt(100);
+        }
+
+        private List<Node> peekFirstK(Queue<Node> queue, int k) {
+            List<Node> list = new ArrayList<>();
+            if (queue == null) {
+                return list;
+            }
+            int cnt = 0;
+            for (Node node : queue) {
+                if (cnt >= k) {
+                    break;
+                }
+                cnt++;
+                list.add(node);
+            }
+            return list;
         }
 
         private void logEntry() {
@@ -116,10 +143,6 @@ public class SushiBar {
             if (insideCnt == MAX_CAPACITY) {
                 System.out.println("PARTY STARTED !!!!!!");
             }
-        }
-
-        private void logDinning() {
-            System.out.println("Customer-" + this.node.getId() + " is now dinning........");
         }
 
         private void logExit() {
@@ -130,34 +153,22 @@ public class SushiBar {
         }
     }
 
-    private List<Node> peekFirstK(Queue<Node> queue, int k) {
-        List<Node> ret = new ArrayList<>();
-        Iterator<Node> it = queue.iterator();
-        int i = 0;
-        while (i < k && it.hasNext()) {
-            ret.add(it.next());
-            i++;
-        }
-        return ret;
-    }
-
-    public void solve() throws InterruptedException {
+    private void solve() throws InterruptedException {
         List<Thread> customerThreads = new ArrayList<>();
         for (int i = 0; i < this.N; i++) {
-            customerThreads.add(new Thread(new CustomerRunnable(i), "Customer-Runnable-" + i));
+            customerThreads.add(new Thread(new CustomerRunnable(i), "Customer-Thread-" + i));
         }
 
         for (Thread t : customerThreads) {
             t.start();
         }
+
         for (Thread t : customerThreads) {
             t.join();
         }
     }
 
-    public static void main(String[] args) throws InterruptedException {
-        int N = 14;
-
-        new SushiBar(N).solve();
+    public static void main(String args[]) throws InterruptedException {
+        new SushiBar(25).solve();
     }
 }

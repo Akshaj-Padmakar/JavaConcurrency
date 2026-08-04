@@ -1,163 +1,174 @@
 package Problems.S02_LessClassical.P07_RollerCoaster;
 
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
-import java.util.Queue;
+import java.util.Random;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+/*
+ * One car, capacity C, N passengers (C < N). The car repeats: load C -> run -> unload C.
+ * Each passenger: board -> ride -> unboard.
+ *
+ * Two rendezvous per ride, both re-armed each ride:
+ *   1. BOARDING : car waits for C passengers aboard; passengers wait for departure.
+ *   2. UNBOARDING: car waits for all C off;         passengers wait for arrival.
+ *
+ * Exact-C admission uses the "one cohort in flight" invariant (like River / H2O):
+ * a boarding gate that admits exactly C, then closes until the ride finishes.
+ *
+ * Infinite simulation (matches the repo convention). See Solution.md for termination.
+ */
 public class RollerCoaster {
-    
-    private final int N; // passenger Threads.
-    private final int C; // capacity of car.
+    private final int N; // passenger threads
+    private final int C; // car capacity
 
     private final Lock lock = new ReentrantLock();
-    private Condition carStartCondition = lock.newCondition();
-    private Condition carRunCondition = lock.newCondition();
-    private Queue<Node> waitingList = new LinkedList<>();
-    private int boarded = 0;
-    private int rideId = 0;
-    private boolean reached = false;
-    private int unboard = 0;
+    private final Condition boardingOpen = lock.newCondition(); // passengers wait for a seat
+    private final Condition carFull = lock.newCondition();      // car waits until C aboard
+    private final Condition running = lock.newCondition();      // passengers wait for ride to finish
+    private final Condition allAshore = lock.newCondition();    // car waits until C have unboarded
 
-    public class Node {
-        public int id;
-        public Condition condition;
-        public Integer carRideId = null;
-        public Node(int id, Condition condition)  {
-            this.id = id;
-            this.condition = condition;
-        }
-    }
-    
+    private int boarded = 0;      // passengers seated in the current ride
+    private int unboarded = 0;    // passengers who have gotten off the current ride
+    private boolean loading = false; // gate: true while the car is at the platform accepting riders
+    private int rideId = 0;       // generation: bumped when the ride finishes
+
+    private final Random rnd = new Random();
+
     public RollerCoaster(int N, int C) {
         this.N = N;
         this.C = C;
     }
 
-    public class CarRunnable implements Runnable {
-        
+    // ---------------- Car ----------------
+    private class CarRunnable implements Runnable {
         @Override
         public void run() {
-            while(true) {
+            while (true) {
                 lock.lock();
-                List<Node> currentRide = new ArrayList<>();
                 try {
-                    while(waitingList.size() < RollerCoaster.this.C)  {
-                        carStartCondition.await();
-                    }
-                    rideId++;
-                    System.out.println("Started Loading in car, with CarRideId: " + rideId); // load
-                    for(int i = 0; i < RollerCoaster.this.C; i++){
-                        Node node = waitingList.poll();
-                        node.carRideId = RollerCoaster.this.rideId;
-                        node.condition.signal();
-
-                        currentRide.add(node);
-                    }
-                    while(boarded < RollerCoaster.this.C) {
-                        carRunCondition.await();
-                    }
-                    System.out.println("Starting car ride, with CarRideId: " + rideId); // run
+                    // Open the platform for boarding and wait until exactly C are aboard.
                     boarded = 0;
-                } catch(InterruptedException e) {
-                    
+                    unboarded = 0;
+                    loading = true;
+                    boardingOpen.signalAll();          // let C passengers in
+                    while (boarded < C) {
+                        carFull.await();
+                    }
+                    loading = false;                   // close the gate: no more boarders this ride
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    return;
                 } finally {
                     lock.unlock();
                 }
-                
-                try {
-                    Thread.sleep(1000);
-                } catch(InterruptedException e) {
 
-                }
+                runRide();                             // slow work OUTSIDE the lock
 
                 lock.lock();
                 try {
-                    System.out.println("Car have reached the destination, with CarRideId: " + rideId);
-                    reached = true;
-                    for(Node node : currentRide) {
-                        node.condition.signal();
+                    // Arrived: release the C riders and wait until all have unboarded.
+                    rideId++;                          // ride finished -> wake the seated riders
+                    running.signalAll();
+                    while (unboarded < C) {
+                        allAshore.await();
                     }
-                    while(unboard < RollerCoaster.this.C) {
-                        carRunCondition.await();
-                    }
-                    reached = false;
-                    unboard = 0;
-                } catch(InterruptedException e) {
-                    e.printStackTrace();
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    return;
                 } finally {
                     lock.unlock();
                 }
-
             }
+        }
+
+        private void runRide() {
+            System.out.println(">>> Car is RUNNING with " + C + " passengers <<<");
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            System.out.println("<<< Car has RETURNED >>>");
         }
     }
 
-    public class PassengerRunnable implements Runnable {
-        private int id;
-        public PassengerRunnable(int id) {
+    // ---------------- Passenger ----------------
+    private class PassengerRunnable implements Runnable {
+        private final int id;
+
+        PassengerRunnable(int id) {
             this.id = id;
         }
+
         @Override
         public void run() {
-            lock.lock();
-            Node me = new Node(this.id, lock.newCondition());
-            try {
-                waitingList.add(me);
-                carStartCondition.signal();
-                while(me.carRideId == null) {
-                    me.condition.await();
-                }
-                
-                System.out.println("Passenger-" + this.id + " is boarding the car. CarRideId: " + me.carRideId); // board method
-                boarded++;
-                carRunCondition.signal();
-            } catch(InterruptedException e) {
-                e.printStackTrace();
-            } finally {
-                lock.unlock();
-            }
+            while (true) {
+                wander();                              // slow work OUTSIDE the lock
 
-            lock.lock();
-            try {
-                while(!reached) {
-                    me.condition.await();
+                lock.lock();
+                try {
+                    // BOARD: wait for an open, not-yet-full car (exact-C gate).
+                    while (!loading || boarded == C) {
+                        boardingOpen.await();
+                    }
+                    boarded++;
+                    int myRide = rideId;               // remember which ride I'm on
+                    System.out.println("Passenger-" + id + " boarded (" + boarded + "/" + C + ").");
+                    if (boarded == C) {
+                        carFull.signal();              // last one in -> tell the car to depart
+                    }
+
+                    // RIDE: wait until the car returns from MY ride.
+                    while (myRide == rideId) {
+                        running.await();
+                    }
+
+                    // UNBOARD.
+                    unboarded++;
+                    System.out.println("Passenger-" + id + " unboarded (" + unboarded + "/" + C + ").");
+                    if (unboarded == C) {
+                        allAshore.signal();            // last one off -> car may start the next ride
+                    }
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } finally {
+                    lock.unlock();
                 }
-                System.out.println("Passenger-" + this.id + " has reached. CarRideId: " + me.carRideId); // unboard method
-                unboard++;
-                carRunCondition.signal();
-            } catch(InterruptedException e) {
-                e.printStackTrace();
-            } finally {
-                lock.unlock();
+            }
+        }
+
+        private void wander() {
+            try {
+                Thread.sleep(rnd.nextInt(400) + 100);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
             }
         }
     }
 
     public void solve() throws InterruptedException {
-        List<Thread> passengerThreads = new ArrayList<>();
-        Thread carThread = new Thread(new CarRunnable(), "Car-Thread");
-
-        for(int i = 0; i < this.N; i++) {
-            passengerThreads.add(new Thread(new PassengerRunnable(i), "Passenger-Thread" + i));
-        }
-        carThread.setDaemon(true);
+        Thread carThread = new Thread(new CarRunnable(), "Car");
         carThread.start();
-        for(Thread t : passengerThreads) {
+
+        List<Thread> passengers = new ArrayList<>();
+        for (int i = 0; i < N; i++) {
+            passengers.add(new Thread(new PassengerRunnable(i), "Passenger-" + i));
+        }
+        for (Thread t : passengers) {
             t.start();
         }
-        for(Thread t : passengerThreads) {
+
+        carThread.join();   // infinite simulation — runs until interrupted
+        for (Thread t : passengers) {
             t.join();
         }
-        Thread.sleep(5000);
     }
-    public static void main(String[] args) throws InterruptedException {
-        int N = 16;
-        int C = 4;
 
-        new RollerCoaster(N, C).solve();
+    public static void main(String[] args) throws InterruptedException {
+        new RollerCoaster(8, 4).solve();   // 8 passengers, car holds 4
     }
 }

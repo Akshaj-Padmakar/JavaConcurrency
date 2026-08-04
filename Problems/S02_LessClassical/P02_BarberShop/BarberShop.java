@@ -178,4 +178,8 @@ public class BarberShop { // This is harder fair version [FIFO]
             t.join();
         }
     }
+
+    public static void main(String args[]) throws InterruptedException {
+        new BarberShop(5, 10).solve();
+    }
 }

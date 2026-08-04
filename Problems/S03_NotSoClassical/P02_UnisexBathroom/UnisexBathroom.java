@@ -41,43 +41,43 @@ S1 :
 
 public class UnisexBathroom {
     private final int N; // number of men
-    private final int M; // Number of women
+    private final int M; // number of women
+
+    private Lock lock = new ReentrantLock();
+
+    private final Random rnd = new Random();
+
+    private final Queue<Node> menWaitingList = new LinkedList<>();
+    private final Queue<Node> womenWaitingList = new LinkedList<>();
+
+    private TYPE currentGender = TYPE.NONE;
+    private final int BATCH_SIZE = 5;
+    private final int MAX_CAPACITY = 3;
+    private int currentGenderCnt = 0;
+    private int insideCnt = 0;
 
     public UnisexBathroom(int N, int M) {
         this.N = N;
         this.M = M;
     }
 
-    private Lock lock = new ReentrantLock();
-    private Random rnd = new Random();
-
-    public enum TYPE {
-        NONE, MEN, WOMEN;
+    enum TYPE {
+        MEN, WOMEN, NONE;
     }
-
-    private TYPE currentGender = TYPE.NONE;
-    private int currentGenderCnt = 0;
-    private int insideCnt = 0;
-
-    private final int BATCH_SIZE = 5;
-    private final int MAX_CAPACITY = 3;
-
-    private Queue<Node> menWaitingList = new LinkedList<>();
-    private Queue<Node> womenWaitingList = new LinkedList<>();
 
     private class Node {
         private final TYPE type;
         private final int id;
-        private Condition condition;
+        private final Condition condition;
 
-        public Node(int id, TYPE type) {
-            this.id = id;
+        private Node(TYPE type, int id) {
             this.type = type;
+            this.id = id;
             this.condition = lock.newCondition();
         }
 
         public TYPE getType() {
-            return type;
+            return this.type;
         }
 
         public int getId() {
@@ -89,20 +89,22 @@ public class UnisexBathroom {
         }
     }
 
-    private abstract class GenderRunnable implements Runnable {
+    private class GenderRunnable implements Runnable {
         private final Node node;
 
         public GenderRunnable(int id, TYPE type) {
-            this.node = new Node(id, type);
+            this.node = new Node(type, id);
             if (type != TYPE.MEN && type != TYPE.WOMEN) {
                 throw new IllegalArgumentException("Only Men and Women gender can be set.");
             }
+
         }
 
         private int peeingTime() {
-            return 300 + rnd.nextInt(100); // [300, 400)
+            return 300 + rnd.nextInt(100);
         }
 
+        @Override
         public void run() {
             enter();
 
@@ -113,30 +115,30 @@ public class UnisexBathroom {
 
         private void enter() {
             lock.lock();
-            Queue<Node> genderQueue = getGenderQueue();
-            genderQueue.add(this.node);
+            Queue<Node> waitingList = getGenderQueue();
+            waitingList.add(this.node);
             try {
                 while (!allow()) {
                     this.node.getCondition().await();
                 }
                 enterInside();
-                genderQueue.poll();
+                waitingList.remove(this.node);
 
                 logEntry();
             } catch (InterruptedException ex) {
                 ex.printStackTrace();
+                Thread.currentThread().interrupt();
             } finally {
                 lock.unlock();
             }
-
         }
 
         private void startPeeing() {
-            logPeeing();
             try {
-                Thread.sleep(this.peeingTime());
+                Thread.sleep(peeingTime());
             } catch (InterruptedException ex) {
                 ex.printStackTrace();
+                Thread.currentThread().interrupt();
             }
         }
 
@@ -150,22 +152,17 @@ public class UnisexBathroom {
                         if (getOppositeGenderQueue().size() > 0) {
                             signalOtherGenderToEnter();
                         } else {
-                            currentGenderCnt = 0;
-                            List<Node> signalCurrentGender = peekFirstK(getGenderQueue(), MAX_CAPACITY);
-                            currentGender = this.node.getType();
-
-                            for (Node currentGenderNode : signalCurrentGender) {
-                                currentGenderNode.getCondition().signal();
-                            }
+                            signalCurrentGenderToEnter();
                         }
-                    } else { // Wait for last currentGender to exit.
+                    } else {
+                        // wait for the last currentGender Human to exit.
                     }
                 } else {
-                    if (getGenderQueue().size() > 0) { // Signal more currentGender.
+                    if (getGenderQueue().size() > 0) {
                         Node currentGenderNode = getGenderQueue().peek();
                         currentGenderNode.getCondition().signal();
                     } else {
-                        // No currentGender waitng.
+                        // No current gender waiting
                         if (insideCnt == 0) {
                             signalOtherGenderToEnter();
                         }
@@ -203,25 +200,39 @@ public class UnisexBathroom {
         private void signalOtherGenderToEnter() {
             resetBathroom();
             List<Node> signalOppositeGender = peekFirstK(getOppositeGenderQueue(), MAX_CAPACITY);
-
             for (Node oppositeNode : signalOppositeGender) {
                 oppositeNode.getCondition().signal();
             }
         }
 
+        private void signalCurrentGenderToEnter() {
+            resetBathroom();
+            List<Node> signalSameGender = peekFirstK(getGenderQueue(), MAX_CAPACITY);
+            for (Node node : signalSameGender) {
+                node.getCondition().signal();
+            }
+        }
+
         private void resetBathroom() {
-            currentGender = this.node.getType() == TYPE.MEN ? TYPE.WOMEN : TYPE.MEN;
+            currentGender = TYPE.NONE;
             currentGenderCnt = 0;
+        }
+
+        private List<Node> peekFirstK(Queue<Node> queue, int k) {
+            List<Node> ret = new ArrayList<>();
+            int cnt = 0;
+            for (Node node : queue) {
+                if (cnt >= k) {
+                    break;
+                }
+                cnt++;
+                ret.add(node);
+            }
+            return ret;
         }
 
         private void logEntry() {
             System.out.println(this.node.getType().toString() + "-" + this.node.getId() + " has entered the bathroom.");
-
-        }
-
-        private void logPeeing() {
-            System.out.println(this.node.getType().toString() + "-" + this.node.getId() + " is peeeingg.......");
-
         }
 
         private void logExit() {
@@ -233,62 +244,46 @@ public class UnisexBathroom {
     }
 
     private class MenRunnable extends GenderRunnable {
-        public MenRunnable(int id) {
+        private MenRunnable(int id) {
             super(id, TYPE.MEN);
         }
     }
 
     private class WomenRunnable extends GenderRunnable {
-        public WomenRunnable(int id) {
+        private WomenRunnable(int id) {
             super(id, TYPE.WOMEN);
         }
     }
 
-    // helper: peek first K entries from queue without removing
-    private List<Node> peekFirstK(Queue<Node> queue, int k) {
-        List<Node> ret = new ArrayList<>();
-        Iterator<Node> it = queue.iterator();
-        int i = 0;
-        while (i < k && it.hasNext()) {
-            ret.add(it.next());
-            i++;
-        }
-        return ret;
-    }
-
     public void solve() throws InterruptedException {
-        List<Thread> menThread = new ArrayList<>();
-        List<Thread> womenThread = new ArrayList<>();
+        List<Thread> menThreads = new ArrayList<>();
+        List<Thread> womenThreads = new ArrayList<>();
 
         for (int i = 0; i < this.N; i++) {
-            menThread.add(new Thread(new MenRunnable(i), "Men-Thread-" + i));
+            menThreads.add(new Thread(new MenRunnable(i), "Men-Thread-" + i));
         }
 
         for (int i = 0; i < this.M; i++) {
-            womenThread.add(new Thread(new WomenRunnable(i), "Women-Thread-" + i));
+            womenThreads.add(new Thread(new WomenRunnable(i), "Women-Thread-" + i));
         }
 
-        for (Thread t : menThread) {
+        for (Thread t : menThreads) {
+            t.start();
+        }
+        for (Thread t : womenThreads) {
             t.start();
         }
 
-        for (Thread t : womenThread) {
-            t.start();
-        }
-
-        for (Thread t : menThread) {
+        for (Thread t : menThreads) {
             t.join();
         }
-
-        for (Thread t : womenThread) {
+        for (Thread t : womenThreads) {
             t.join();
         }
     }
 
-    public static void main(String[] args) throws InterruptedException {
-        int N = 22;
-        int M = 17;
-        new UnisexBathroom(N, M).solve();
+    public static void main(String args[]) throws InterruptedException {
+        new UnisexBathroom(22, 17).solve();
     }
 
 }

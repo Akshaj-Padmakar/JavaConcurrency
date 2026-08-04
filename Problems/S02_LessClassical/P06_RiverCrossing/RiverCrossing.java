@@ -2,196 +2,154 @@ package Problems.S02_LessClassical.P06_RiverCrossing;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class RiverCrossing {
-
-    private final int N; // Number of serfs
-    private final int M; // number of hackers
+    private final int hackerCnt;
+    private final int serfCnt;
 
     private final Lock lock = new ReentrantLock();
-    private final Semaphore serfSemaphore = new Semaphore(0);
-    private final Semaphore hackerSemaphore = new Semaphore(0);
+    private Condition serfWaitingCondition = lock.newCondition();
+    private Condition hackerWaitingCondition = lock.newCondition();
+    private Condition onBoardWaitCondition = lock.newCondition();
 
-    private final CyclicBarrier barrier = new CyclicBarrier(4);
+    private int hackerWaiting = 0;
+    private int serfWaiting = 0;
+    private int hackerRelease = 0;
+    private int serfRelease = 0;
+    private int generation = 0;
+    private int onBoard = 0;
 
-    private boolean boardingStarted = false;
-    private Condition boardingCondition = lock.newCondition();
-
-    private int serf = 0;
-    private int hacker = 0;
-    private int boatNumber = 0;
-
-    public RiverCrossing(int N, int M) {
-        this.N = N;
-        this.M = M;
+    public RiverCrossing(int hackerCnt, int serfCnt) {
+        this.hackerCnt = hackerCnt;
+        this.serfCnt = serfCnt;
     }
 
-    public class SerfRunnable implements Runnable {
-        private int id;
+    private class HackerRunnable implements Runnable {
+        private final int id;
 
-        public SerfRunnable(int id) {
+        private HackerRunnable(int id) {
             this.id = id;
         }
 
         @Override
         public void run() {
-            boolean isCaptain = false;
             lock.lock();
             try {
-                while (boardingStarted) {
-                    boardingCondition.await();
+                hackerWaiting++;
+                tryBoarding();
+                while (hackerRelease == 0) {
+                    hackerWaitingCondition.await();
                 }
-                serf++;
-
-                if (serf >= 4) {
-                    serf -= 4;
-                    isCaptain = true;
-                    serfSemaphore.release(4);
-                    boatNumber++;
-                    boardingStarted = true;
-                } else if (serf >= 2 && hacker >= 2) {
-                    serf -= 2;
-                    hacker -= 2;
-                    isCaptain = true;
-                    serfSemaphore.release(2);
-                    hackerSemaphore.release(2);
-                    boatNumber++;
-                    boardingStarted = true;
-                }
+                hackerRelease--;
+                System.out.println("Hacker-" + this.id + " is released....; gen=" + generation);
+                barrier();
             } catch (InterruptedException ex) {
                 ex.printStackTrace();
-            } finally {
-                lock.unlock();
-            }
-
-            try {
-                serfSemaphore.acquire();
-                board(this.id, "Serf");
-                barrier.await();
-                if (isCaptain) {
-                    rowBoat(this.id, "Serf");
-                }
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
-            lock.lock();
-            try {
-                if (isCaptain) {
-                    System.out.println("We have reached !!! boatNumber = " + boatNumber);
-                    boardingStarted = false;
-                    boardingCondition.signalAll();
-                }
+                Thread.currentThread().interrupt();
             } finally {
                 lock.unlock();
             }
         }
     }
 
-    public class HackerRunnable implements Runnable {
-        private int id;
+    private class SerfRunnable implements Runnable {
+        private final int id;
 
-        public HackerRunnable(int id) {
+        private SerfRunnable(int id) {
             this.id = id;
         }
 
         @Override
         public void run() {
-            boolean isCaptain = false;
             lock.lock();
             try {
-                while (boardingStarted) {
-                    boardingCondition.await();
+                serfWaiting++;
+                tryBoarding();
+                while (serfRelease == 0) {
+                    serfWaitingCondition.await();
                 }
-                hacker++;
-
-                if (hacker >= 4) {
-                    hacker -= 4;
-                    isCaptain = true;
-                    hackerSemaphore.release(4);
-                    boatNumber++;
-                    boardingStarted = true;
-                } else if (hacker >= 2 && serf >= 2) {
-                    serf -= 2;
-                    hacker -= 2;
-                    isCaptain = true;
-                    hackerSemaphore.release(2);
-                    serfSemaphore.release(2);
-                    boatNumber++;
-                    boardingStarted = true;
-                }
+                serfRelease--;
+                System.out.println("Serf-" + this.id + " is released....; gen=" + generation);
+                barrier();
             } catch (InterruptedException ex) {
                 ex.printStackTrace();
-            } finally {
-                lock.unlock();
-            }
-
-            try {
-                hackerSemaphore.acquire();
-                board(id, "Hacker");
-                barrier.await();
-                if (isCaptain) {
-                    rowBoat(id, "Hacker");
-                }
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
-
-            lock.lock();
-            try {
-                if (isCaptain) {
-                    System.out.println("We have reached !!! boatNumber = " + boatNumber);
-                    boardingStarted = false;
-                    boardingCondition.signalAll();
-                }
+                Thread.currentThread().interrupt();
             } finally {
                 lock.unlock();
             }
         }
     }
 
-    private void board(int id, String type) {
-        System.out.println(type + id + " has boarded the boat. boatNumber = " + boatNumber);
+    private void tryBoarding() {
+        if (hackerRelease != 0 || serfRelease != 0) {
+            // safe guard, some hacker/serf have already been released.
+            // if say 4 serf and 4 hacker are released, they can intertwine to form 3S 1H
+            return;
+        }
+        if (serfWaiting >= 4) {
+            serfWaiting -= 4;
+            serfRelease += 4;
+            serfWaitingCondition.signalAll();
+        } else if (hackerWaiting >= 4) {
+            hackerWaiting -= 4;
+            hackerRelease += 4;
+            hackerWaitingCondition.signalAll();
+        } else if (hackerWaiting >= 2 && serfWaiting >= 2) {
+            serfWaiting -= 2;
+            hackerWaiting -= 2;
+            hackerRelease += 2;
+            serfRelease += 2;
+            hackerWaitingCondition.signalAll();
+            serfWaitingCondition.signalAll();
+        }
     }
 
-    private void rowBoat(int id, String type) {
-        System.out.println(type + id + " is the captain, and rowing the boat, boatNumber = " + boatNumber);
+    private void barrier() throws InterruptedException {
+        int currentGen = generation;
+        onBoard++;
+        if (onBoard == 4) {
+            generation++;
+            onBoard = 0;
+            onBoardWaitCondition.signalAll();
+            tryBoarding();
+        } else {
+            while (currentGen == generation) {
+                onBoardWaitCondition.await();
+            }
+        }
     }
 
     public void solve() throws InterruptedException {
-        List<Thread> serfThreads = new ArrayList<>();
         List<Thread> hackerThreads = new ArrayList<>();
-        for (int i = 0; i < this.N; i++) {
-            serfThreads.add(new Thread(new SerfRunnable(i), "Serf-Thread-" + i));
-        }
-
-        for (int i = 0; i < this.M; i++) {
+        List<Thread> serfThreads = new ArrayList<>();
+        for (int i = 0; i < this.hackerCnt; i++) {
             hackerThreads.add(new Thread(new HackerRunnable(i), "Hacker-Thread-" + i));
         }
 
-        for (Thread t : serfThreads) {
-            t.start();
+        for (int i = 0; i < this.serfCnt; i++) {
+            serfThreads.add(new Thread(new SerfRunnable(i), "Serf-Thread-" + i));
         }
 
         for (Thread t : hackerThreads) {
             t.start();
         }
-
         for (Thread t : serfThreads) {
-            t.join();
+            t.start();
         }
+
         for (Thread t : hackerThreads) {
             t.join();
         }
+        for (Thread t : serfThreads) {
+            t.join();
+        }
     }
 
-    public static void main(String[] args) throws InterruptedException {
-        int N = 10;
-        int M = 10;
-        new RiverCrossing(N, M).solve();
+    public static void main(String args[]) throws InterruptedException {
+        new RiverCrossing(10, 10).solve();
     }
+
 }

@@ -3,59 +3,182 @@ package Problems.S00_General.P01_MultiThreadedDFS.Test;
 import Problems.S00_General.P01_MultiThreadedDFS.MultiThreadedDFS;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MultiThreadedDFSTest {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
+        testSharedChildVisitedOnce();
+        testCycleBackToStartVisitedOnce();
+        testDuplicateEdgesVisitedOnce();
+        testMissingAdjacencyListStillVisitsNode();
+        testNullStartDoesNothing();
+        testEmptyGraphDoesNothing();
 
+        System.out.println("All MultiThreadedDFS tests passed.");
+    }
+
+    private static void testSharedChildVisitedOnce() {
         Map<MultiThreadedDFS.Node, List<MultiThreadedDFS.Node>> graph = new HashMap<>();
+        MultiThreadedDFS dfs = new MultiThreadedDFS(graph, 4);
+        VisitRecorder recorder = new VisitRecorder();
 
-        MultiThreadedDFS dfs = new MultiThreadedDFS(6, graph, 3);
+        CountingNode a = new CountingNode(dfs, "A", recorder);
+        CountingNode b = new CountingNode(dfs, "B", recorder);
+        CountingNode c = new CountingNode(dfs, "C", recorder);
+        CountingNode d = new CountingNode(dfs, "D", recorder);
 
-        // Create nodes
-        MultiThreadedDFS.Node n1 = dfs.new Node("1");
-        MultiThreadedDFS.Node n2 = dfs.new Node("2");
-        MultiThreadedDFS.Node n3 = dfs.new Node("3");
-        MultiThreadedDFS.Node n4 = dfs.new Node("4");
-        MultiThreadedDFS.Node n5 = dfs.new Node("5");
-        MultiThreadedDFS.Node n6 = dfs.new Node("6");
+        graph.put(a, listOf(b, c));
+        graph.put(b, listOf(d));
+        graph.put(c, listOf(d));
+        graph.put(d, Collections.emptyList());
 
-        /*
-         * 1
-         * / \
-         * 2 3
-         * / \ / \
-         * 4 5 5 6
-         * 
-         * Shared node 5 tests visited logic.
-         */
+        dfs.multiThreadedDFS(a);
 
-        graph.put(n1, new ArrayList<>());
-        graph.put(n2, new ArrayList<>());
-        graph.put(n3, new ArrayList<>());
-        graph.put(n4, new ArrayList<>());
-        graph.put(n5, new ArrayList<>());
-        graph.put(n6, new ArrayList<>());
+        assertVisitCount("shared child A", recorder, "A", 1);
+        assertVisitCount("shared child B", recorder, "B", 1);
+        assertVisitCount("shared child C", recorder, "C", 1);
+        assertVisitCount("shared child D", recorder, "D", 1);
+        assertTotalVisits("shared child total", recorder, 4);
+    }
 
-        graph.get(n1).add(n2);
-        graph.get(n1).add(n3);
+    private static void testCycleBackToStartVisitedOnce() {
+        Map<MultiThreadedDFS.Node, List<MultiThreadedDFS.Node>> graph = new HashMap<>();
+        MultiThreadedDFS dfs = new MultiThreadedDFS(graph, 3);
+        VisitRecorder recorder = new VisitRecorder();
 
-        graph.get(n2).add(n4);
-        graph.get(n2).add(n5);
+        CountingNode a = new CountingNode(dfs, "A", recorder);
+        CountingNode b = new CountingNode(dfs, "B", recorder);
+        CountingNode c = new CountingNode(dfs, "C", recorder);
 
-        graph.get(n3).add(n5);
-        graph.get(n3).add(n6);
+        graph.put(a, listOf(b));
+        graph.put(b, listOf(c));
+        graph.put(c, listOf(a));
 
-        System.out.println("Starting Multithreaded DFS...");
+        dfs.multiThreadedDFS(a);
 
-        dfs.multiThreadedDFS(n1);
+        assertVisitCount("cycle A", recorder, "A", 1);
+        assertVisitCount("cycle B", recorder, "B", 1);
+        assertVisitCount("cycle C", recorder, "C", 1);
+        assertTotalVisits("cycle total", recorder, 3);
+    }
 
-        // Wait for async execution
-        Thread.sleep(3000);
+    private static void testDuplicateEdgesVisitedOnce() {
+        Map<MultiThreadedDFS.Node, List<MultiThreadedDFS.Node>> graph = new HashMap<>();
+        MultiThreadedDFS dfs = new MultiThreadedDFS(graph, 3);
+        VisitRecorder recorder = new VisitRecorder();
 
-        System.out.println("✅ Traversal Finished.");
+        CountingNode a = new CountingNode(dfs, "A", recorder);
+        CountingNode b = new CountingNode(dfs, "B", recorder);
+
+        graph.put(a, listOf(b, b, b));
+        graph.put(b, Collections.emptyList());
+
+        dfs.multiThreadedDFS(a);
+
+        assertVisitCount("duplicate edge A", recorder, "A", 1);
+        assertVisitCount("duplicate edge B", recorder, "B", 1);
+        assertTotalVisits("duplicate edge total", recorder, 2);
+    }
+
+    private static void testMissingAdjacencyListStillVisitsNode() {
+        Map<MultiThreadedDFS.Node, List<MultiThreadedDFS.Node>> graph = new HashMap<>();
+        MultiThreadedDFS dfs = new MultiThreadedDFS(graph, 2);
+        VisitRecorder recorder = new VisitRecorder();
+
+        CountingNode a = new CountingNode(dfs, "A", recorder);
+        CountingNode b = new CountingNode(dfs, "B", recorder);
+
+        graph.put(a, listOf(b));
+
+        dfs.multiThreadedDFS(a);
+
+        assertVisitCount("missing adjacency A", recorder, "A", 1);
+        assertVisitCount("missing adjacency B", recorder, "B", 1);
+        assertTotalVisits("missing adjacency total", recorder, 2);
+    }
+
+    private static void testNullStartDoesNothing() {
+        Map<MultiThreadedDFS.Node, List<MultiThreadedDFS.Node>> graph = new HashMap<>();
+        MultiThreadedDFS dfs = new MultiThreadedDFS(graph, 2);
+        VisitRecorder recorder = new VisitRecorder();
+
+        CountingNode a = new CountingNode(dfs, "A", recorder);
+        graph.put(a, Collections.emptyList());
+
+        dfs.multiThreadedDFS(null);
+
+        assertTotalVisits("null start total", recorder, 0);
+    }
+
+    private static void testEmptyGraphDoesNothing() {
+        Map<MultiThreadedDFS.Node, List<MultiThreadedDFS.Node>> graph = new HashMap<>();
+        MultiThreadedDFS dfs = new MultiThreadedDFS(graph, 2);
+        VisitRecorder recorder = new VisitRecorder();
+        CountingNode a = new CountingNode(dfs, "A", recorder);
+
+        dfs.multiThreadedDFS(a);
+
+        assertTotalVisits("empty graph total", recorder, 0);
+    }
+
+    private static List<MultiThreadedDFS.Node> listOf(MultiThreadedDFS.Node... nodes) {
+        List<MultiThreadedDFS.Node> result = new ArrayList<>();
+        Collections.addAll(result, nodes);
+        return result;
+    }
+
+    private static void assertVisitCount(String testName, VisitRecorder recorder, String nodeId, int expected) {
+        int actual = recorder.countFor(nodeId);
+        if (actual != expected) {
+            throw new AssertionError(testName + " expected " + expected + " visits for " + nodeId + " but got " + actual);
+        }
+    }
+
+    private static void assertTotalVisits(String testName, VisitRecorder recorder, int expected) {
+        int actual = recorder.totalVisits();
+        if (actual != expected) {
+            throw new AssertionError(testName + " expected " + expected + " total visits but got " + actual);
+        }
+    }
+
+    private static class CountingNode extends MultiThreadedDFS.Node {
+        private final VisitRecorder recorder;
+
+        private CountingNode(MultiThreadedDFS dfs, String id, VisitRecorder recorder) {
+            dfs.super(id);
+            this.recorder = recorder;
+        }
+
+        @Override
+        public void doWork() {
+            recorder.record(getId());
+        }
+    }
+
+    private static class VisitRecorder {
+        private final ConcurrentHashMap<String, AtomicInteger> visitCounts = new ConcurrentHashMap<>();
+
+        private void record(String nodeId) {
+            visitCounts.computeIfAbsent(nodeId, ignored -> new AtomicInteger()).incrementAndGet();
+        }
+
+        private int countFor(String nodeId) {
+            AtomicInteger count = visitCounts.get(nodeId);
+            return count == null ? 0 : count.get();
+        }
+
+        private int totalVisits() {
+            int total = 0;
+            for (AtomicInteger count : visitCounts.values()) {
+                total += count.get();
+            }
+            return total;
+        }
     }
 }

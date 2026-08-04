@@ -7,19 +7,19 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class DinningSavage {
-    private final int M; // Number of servings.
-    private final int N; // Number of savages.
-    private int current; // Current servings left.
+    private int N; // number of savage
+    private int M; // capacity of pot
+    private int currentServings = 0;
 
-    private final Lock lock = new ReentrantLock();
-    private final Condition empty = lock.newCondition();
-    private final Condition cook = lock.newCondition();
-    private boolean cookRequested = false;
+    private Lock lock = new ReentrantLock();
+    private Condition cookCondition = lock.newCondition();
+    private Condition savageCondition = lock.newCondition();
 
-    public DinningSavage(int M, int N) {
-        this.M = M;
+    private boolean cookRequeted = false;
+
+    public DinningSavage(int N, int M) {
         this.N = N;
-        this.current = M;
+        this.M = M;
     }
 
     private class CookRunnable implements Runnable {
@@ -33,34 +33,45 @@ public class DinningSavage {
         private void putServingsInPot() {
             lock.lock();
             try {
-                while (current > 0) {
-                    cook.await();
+                while (currentServings > 0) {
+                    cookCondition.await();
                 }
-                System.out.println("Cook has started cooking...");
+                System.out.println("Cook is signalled to cook....");
             } catch (InterruptedException ex) {
                 ex.printStackTrace();
+                Thread.currentThread().interrupt();
             } finally {
                 lock.unlock();
             }
+
+            System.out.println("Cook has started cooking !");
+
             try {
-                Thread.sleep(500); // Allowing other savage threads to request more servings...
+                Thread.sleep(1000);
             } catch (InterruptedException ex) {
                 ex.printStackTrace();
             }
 
             lock.lock();
             try {
-                System.out.println("Cook is done cooking !");
-                current = M;
-                empty.signalAll();
+                System.out.println("COOKED !");
+                currentServings = M;
+                savageCondition.signalAll();
+                cookRequeted = false;
             } finally {
-                cookRequested = false;
                 lock.unlock();
             }
+
         }
     }
 
     private class SavageRunnable implements Runnable {
+        int id;
+
+        private SavageRunnable(int id) {
+            this.id = id;
+        }
+
         @Override
         public void run() {
             while (true) {
@@ -72,52 +83,56 @@ public class DinningSavage {
         private void getServingFromPot() {
             lock.lock();
             try {
-                while (current == 0) {
-                    if (!cookRequested) {
-                        cook.signal();
-                        cookRequested = true;
+                while (currentServings == 0) {
+                    if (!cookRequeted) {
+                        cookRequeted = true;
+                        cookCondition.signal();
+                        System.out.println("No servings left in pot, signalling cook to make more.");
                     }
-                    empty.await();
+                    savageCondition.await();
                 }
-                current--;
-                System.out.println("Savage has taken a serving out of pot. currentServingsLeft = " + current
-                        + ", currentSavageThread =" + Thread.currentThread().getName());
+                System.out.println("Savage-" + this.id + " is taking a serving from pot.");
+                currentServings--;
             } catch (InterruptedException ex) {
                 ex.printStackTrace();
+                Thread.currentThread().interrupt();
             } finally {
                 lock.unlock();
             }
         }
 
         private void eat() {
+            System.out.println("Savage-" + this.id + " is eating....");
             try {
-                System.out.println(
-                        "Savage has started eating. currentSavageThread = " + Thread.currentThread().getName());
-                Thread.sleep(200);
-                System.out.println("Savage is done eating. currentSavageThread = " + Thread.currentThread().getName());
+                Thread.sleep(500);
             } catch (InterruptedException ex) {
                 ex.printStackTrace();
+                Thread.currentThread().interrupt();
             }
+            System.out.println("Savage-" + this.id + " is done eating !!!");
         }
     }
 
     public void solve() throws InterruptedException {
         Thread cookThread = new Thread(new CookRunnable(), "Cook-Thread");
-        List<Thread> savageThreads = new ArrayList<>();
 
-        for (int i = 0; i < N; i++) {
-            savageThreads.add(new Thread(new SavageRunnable(), "Savage-Thread-" + i));
+        List<Thread> savageThreads = new ArrayList<>();
+        for (int i = 0; i < this.N; i++) {
+            savageThreads.add(new Thread(new SavageRunnable(i), "Savage-Thread-" + i));
         }
 
         cookThread.start();
-
-        for (Thread savageThread : savageThreads) {
-            savageThread.start();
+        for (Thread t : savageThreads) {
+            t.start();
         }
 
         cookThread.join();
-        for (Thread savageThread : savageThreads) {
-            savageThread.join();
+        for (Thread t : savageThreads) {
+            t.join();
         }
+    }
+
+    public static void main(String args[]) throws InterruptedException {
+        new DinningSavage(5, 2).solve();
     }
 }

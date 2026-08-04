@@ -2,149 +2,120 @@ package Problems.S02_LessClassical.P04_SantaClaus;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class SantaClaus {
+    private static final int REINDEER = 9;
+    private static final int ELF_GROUP = 3;
 
-    private final int reindeerCnt = 9;
-    private final int elvesCnt;
+    private final int elfCnt;
+    private int elfWaiting = 0;
+    private int reindeerWaiting = 0;
+    private int reindeerDelivered = 0;
+    private int elfHelped = 0;
 
     private final Lock lock = new ReentrantLock();
+    private Condition santaSleepCondition = lock.newCondition();
+    private Condition reindeerWaitingCondition = lock.newCondition();
+    private Condition elfWaitingCondition = lock.newCondition();
 
-    private final Condition santaSleepCondition = lock.newCondition();
-    private final Condition elvesWaitingCondition = lock.newCondition();
-    private final Condition elvesHelpCondition = lock.newCondition();
-    private final Condition reindeerCondition = lock.newCondition();
+    private boolean delivering = false;
+    private boolean helping = false;
 
-    private int elvesWaiting = 0;
-    private int elvesBeingHelped = 0;
+    private Random rnd = new Random();
 
-    private int reindeerReturned = 0;
-
-    private boolean santaHelpingElves = false;
-    private boolean santaPreparingSleigh = false;
-
-    public SantaClaus(int elvesCnt) {
-        this.elvesCnt = elvesCnt;
+    public SantaClaus(int elfCnt) {
+        this.elfCnt = elfCnt;
     }
 
     private class SantaRunnable implements Runnable {
-
         @Override
         public void run() {
             while (true) {
                 lock.lock();
                 try {
-                    while (reindeerReturned < 9 && elvesWaiting < 3) {
-                        System.out.println("Santa sleeping...");
+                    while (reindeerWaiting < REINDEER && elfWaiting < ELF_GROUP) {
                         santaSleepCondition.await();
                     }
-
-                    if (reindeerReturned == 9) { // Reindeer have priority
-                        santaPreparingSleigh = true;
-                        System.out.println("Santa preparing sleigh!");
-
-                        reindeerCondition.signalAll();
-                    } else if (elvesWaiting == 3) {
-                        santaHelpingElves = true;
-                        elvesBeingHelped = 3;
-                        System.out.println("Santa helping elves!");
-
-                        elvesHelpCondition.signalAll();
+                    if (reindeerWaiting == REINDEER) {
+                        System.out.println("Santa: Ho ho ho! 9 reindeer are back — DELIVERING TOYS!");
+                        delivering = true;
+                        reindeerWaiting = 0;
+                        reindeerWaitingCondition.signalAll();
+                    } else {
+                        System.out.println("Santa: helping a group of 3 elves.");
+                        helping = true;
+                        elfWaiting = 0;
+                        elfWaitingCondition.signalAll();
                     }
-
                 } catch (InterruptedException ex) {
                     ex.printStackTrace();
-
+                    Thread.currentThread().interrupt();
+                    break;
                 } finally {
                     lock.unlock();
-                }
-
-                try {
-                    if (santaPreparingSleigh) {
-                        Thread.sleep(500);
-                        lock.lock();
-                        try {
-                            System.out.println("Santa finished sleigh prep!");
-
-                            reindeerReturned = 0;
-                            santaPreparingSleigh = false;
-                        } finally {
-                            lock.unlock();
-                        }
-                    } else if (santaHelpingElves) {
-
-                        Thread.sleep(300);
-                        lock.lock();
-                        try {
-                            System.out.println("Santa finished helping elves!");
-                            santaHelpingElves = false;
-                            elvesWaiting = 0;
-                            elvesWaitingCondition.signalAll();
-                        } finally {
-                            lock.unlock();
-                        }
-                    }
-
-                } catch (InterruptedException ex) {
-                    ex.printStackTrace();
                 }
             }
         }
     }
 
-    private class ElvesRunnable implements Runnable {
+    private class ElfRunnable implements Runnable {
+        private int id;
 
-        private final int id;
-
-        public ElvesRunnable(int id) {
+        public ElfRunnable(int id) {
             this.id = id;
         }
 
         @Override
         public void run() {
             while (true) {
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException ex) {
-                    ex.printStackTrace();
-                }
+                work();
 
                 lock.lock();
                 try {
-                    while (elvesWaiting == 3 || santaHelpingElves) {
-                        elvesWaitingCondition.await();
+                    while (elfWaiting == ELF_GROUP || helping) {
+                        elfWaitingCondition.await();
                     }
-                    elvesWaiting++;
-                    System.out.println("Elf-" + id + " waiting. count=" + elvesWaiting);
-                    if (elvesWaiting == 3) {
-                        System.out.println("3 elves waking Santa!");
+                    elfWaiting++;
+                    System.out.println("Elf-" + id + " has a problem, waiting (" + elfWaiting + "/3).");
+                    if (elfWaiting == ELF_GROUP) {
                         santaSleepCondition.signal();
                     }
-                    while (!santaHelpingElves) {
-                        elvesHelpCondition.await();
-                    }
-                    System.out.println("Elf-" + id + " getting help");
-                    elvesBeingHelped--;
 
-                    if (elvesBeingHelped == 0) {
-                        System.out.println("Last elf done.");
+                    while (!helping) {
+                        elfWaitingCondition.await();
                     }
+                    System.out.println("Elf-" + id + " is being helped by Santa.");
 
+                    elfHelped++;
+                    if (elfHelped == ELF_GROUP) {
+                        elfHelped = 0;
+                        helping = false;
+                        elfWaitingCondition.signalAll();
+                    }
                 } catch (InterruptedException ex) {
                     ex.printStackTrace();
+                    Thread.currentThread().interrupt();
                 } finally {
                     lock.unlock();
                 }
             }
         }
+
+        private void work() {
+            try {
+                Thread.sleep(200 + rnd.nextInt(200));
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private class ReindeerRunnable implements Runnable {
-
-        private final int id;
+        private int id;
 
         public ReindeerRunnable(int id) {
             this.id = id;
@@ -153,25 +124,31 @@ public class SantaClaus {
         @Override
         public void run() {
             while (true) {
-                try {
-                    Thread.sleep(3000);
-                } catch (InterruptedException ex) {
-                    ex.printStackTrace();
-                }
+                onVacation();
 
                 lock.lock();
                 try {
-                    reindeerReturned++;
-                    System.out.println("Reindeer-" + id + " returned. count=" + reindeerReturned);
-
-                    if (reindeerReturned == 9) {
-                        System.out.println("All reindeer back! Waking Santa!");
+                    while (delivering) {
+                        // safe guard when x reindeers are only needed for hitching and y reindeer
+                        // threads exist(y > x)
+                        reindeerWaitingCondition.await();
+                    }
+                    reindeerWaiting++;
+                    System.out.println("Reindeer-" + id + " is back (" + reindeerWaiting + "/9).");
+                    if (reindeerWaiting == REINDEER) {
                         santaSleepCondition.signal();
                     }
-                    while (!santaPreparingSleigh) {
-                        reindeerCondition.await();
+
+                    while (!delivering) {
+                        reindeerWaitingCondition.await();
                     }
-                    System.out.println("Reindeer-" + id + " getting hitched.");
+                    System.out.println("Reindeer-" + id + " is harnessed and delivering toys.");
+                    reindeerDelivered++;
+                    if (reindeerDelivered == REINDEER) {
+                        reindeerDelivered = 0;
+                        delivering = false;
+                        reindeerWaitingCondition.signalAll();
+                    }
                 } catch (InterruptedException ex) {
                     ex.printStackTrace();
                 } finally {
@@ -179,26 +156,30 @@ public class SantaClaus {
                 }
             }
         }
+
+        private void onVacation() {
+            try {
+                Thread.sleep(rnd.nextInt(300) + 300);
+            } catch (InterruptedException ex) {
+                ex.printStackTrace();
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     public void solve() throws InterruptedException {
         Thread santaThread = new Thread(new SantaRunnable(), "Santa-Thread");
-
-        List<Thread> elvesThread = new ArrayList<>();
-
-        for (int i = 0; i < elvesCnt; i++) {
-
-            elvesThread.add(new Thread(new ElvesRunnable(i), "Elf-Thread-" + i));
-        }
-
+        List<Thread> elfThreads = new ArrayList<>();
         List<Thread> reindeerThreads = new ArrayList<>();
 
-        for (int i = 0; i < reindeerCnt; i++) {
+        for (int i = 0; i < this.elfCnt; i++) {
+            elfThreads.add(new Thread(new ElfRunnable(i), "Elf-Runnable-" + i));
+        }
+        for (int i = 0; i < REINDEER; i++) {
             reindeerThreads.add(new Thread(new ReindeerRunnable(i), "Reindeer-Thread-" + i));
         }
-
         santaThread.start();
-        for (Thread t : elvesThread) {
+        for (Thread t : elfThreads) {
             t.start();
         }
         for (Thread t : reindeerThreads) {
@@ -206,7 +187,7 @@ public class SantaClaus {
         }
 
         santaThread.join();
-        for (Thread t : elvesThread) {
+        for (Thread t : elfThreads) {
             t.join();
         }
         for (Thread t : reindeerThreads) {

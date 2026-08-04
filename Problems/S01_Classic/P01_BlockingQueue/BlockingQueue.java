@@ -8,22 +8,19 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class BlockingQueue<T> {
-
     private final int maxSize;
     private int currentSize = 0;
-
-    private final List<T> queue;
-
     private final Lock lock;
     private final Condition emptyCondition;
     private final Condition fullCondition;
+    private List<T> queue;
 
     public BlockingQueue(int maxSize, boolean fair) {
-        this.queue = new LinkedList<>();
+        this.maxSize = maxSize;
         this.lock = new ReentrantLock(fair);
         this.emptyCondition = lock.newCondition();
         this.fullCondition = lock.newCondition();
-        this.maxSize = maxSize;
+        this.queue = new LinkedList<>();
     }
 
     /* ================= INSERT METHODS ================= */
@@ -35,11 +32,9 @@ public class BlockingQueue<T> {
         lock.lock();
         try {
             if (currentSize == maxSize) {
-                throw new IllegalStateException("The size of the queue is full.");
+                throw new IllegalStateException("Queue is already full.");
             }
-            queue.add(item);
-            currentSize++;
-            emptyCondition.signalAll();
+            addElement(item);
         } finally {
             lock.unlock();
         }
@@ -54,9 +49,7 @@ public class BlockingQueue<T> {
             if (currentSize == maxSize) {
                 return false;
             }
-            currentSize++;
-            queue.add(item);
-            emptyCondition.signalAll();
+            addElement(item);
             return true;
         } finally {
             lock.unlock();
@@ -67,24 +60,24 @@ public class BlockingQueue<T> {
         if (item == null) {
             throw new NullPointerException("Element is null.");
         }
-        lock.lockInterruptibly();
+        lock.lock();
         try {
             while (currentSize == maxSize) {
                 fullCondition.await();
             }
-            currentSize++;
-            queue.add(item);
-            emptyCondition.signalAll();
+            addElement(item);
         } finally {
             lock.unlock();
         }
     }
 
     public boolean offer(T item, long timeout, TimeUnit timeUnit) throws InterruptedException {
+        if (item == null) {
+            throw new NullPointerException("Element is null.");
+        }
         long nanos = timeUnit.toNanos(timeout);
-        final long deadline = System.nanoTime() + nanos;
-
-        lock.lockInterruptibly();
+        long deadline = System.nanoTime() + nanos;
+        lock.lock();
         try {
             while (currentSize == maxSize) {
                 nanos = deadline - System.nanoTime();
@@ -93,13 +86,17 @@ public class BlockingQueue<T> {
                     return false;
                 }
             }
-            queue.add(item);
-            currentSize++;
-            emptyCondition.signalAll();
+            addElement(item);
             return true;
         } finally {
             lock.unlock();
         }
+    }
+
+    private void addElement(T item) {
+        currentSize++;
+        queue.add(item);
+        emptyCondition.signal();
     }
 
     /* ================= REMOVE METHODS ================= */
@@ -110,25 +107,19 @@ public class BlockingQueue<T> {
             if (currentSize == 0) {
                 return null;
             }
-            T item = queue.removeFirst();
-            currentSize--;
-            fullCondition.signalAll();
-            return item;
+            return getFront();
         } finally {
             lock.unlock();
         }
     }
 
     public T take() throws InterruptedException {
-        lock.lockInterruptibly();
+        lock.lock();
         try {
             while (currentSize == 0) {
                 emptyCondition.await();
             }
-            T item = queue.removeFirst();
-            currentSize--;
-            fullCondition.signalAll();
-            return item;
+            return getFront();
         } finally {
             lock.unlock();
         }
@@ -136,24 +127,27 @@ public class BlockingQueue<T> {
 
     public T poll(long timeout, TimeUnit timeUnit) throws InterruptedException {
         long nanos = timeUnit.toNanos(timeout);
-        final long deadline = System.nanoTime() + nanos;
-        lock.lockInterruptibly();
+        long deadline = System.nanoTime() + nanos;
+        lock.lock();
         try {
             while (currentSize == 0) {
                 nanos = deadline - System.nanoTime();
                 boolean awaitSuccess = emptyCondition.await(nanos, TimeUnit.NANOSECONDS);
-                if (!awaitSuccess) {
+                if (awaitSuccess == false) {
                     return null;
                 }
             }
-
-            T item = queue.removeFirst();
-            currentSize--;
-            fullCondition.signalAll();
-            return item;
+            return getFront();
         } finally {
             lock.unlock();
         }
+    }
+
+    private T getFront() {
+        T item = queue.removeFirst();
+        currentSize--;
+        fullCondition.signal();
+        return item;
     }
 
     /* ================= EXAMINE METHODS ================= */
