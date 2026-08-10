@@ -1,55 +1,61 @@
 package Problems.S01_Classic.P01_BlockingQueue;
 
 import java.util.LinkedList;
-import java.util.List;
+import java.util.Queue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class BlockingQueue<T> {
-    private final int maxSize;
-    private int currentSize = 0;
+    private final int maxCapacity;
+
+    private final Queue<T> queue;
+
     private final Lock lock;
     private final Condition emptyCondition;
     private final Condition fullCondition;
-    private List<T> queue;
 
-    public BlockingQueue(int maxSize, boolean fair) {
-        this.maxSize = maxSize;
+    public BlockingQueue(int maxCapacity) {
+        this(maxCapacity, false);
+    }
+
+    public BlockingQueue(int maxCapacity, boolean fair) {
+        if (maxCapacity <= 0) {
+            throw new IllegalArgumentException("capacity must be > 0.");
+        }
+        this.maxCapacity = maxCapacity;
         this.lock = new ReentrantLock(fair);
-        this.emptyCondition = lock.newCondition();
-        this.fullCondition = lock.newCondition();
         this.queue = new LinkedList<>();
+        this.emptyCondition = this.lock.newCondition();
+        this.fullCondition = this.lock.newCondition();
     }
 
     /* ================= INSERT METHODS ================= */
+    public void add(T item) {
+        nullCheckOnItem(item);
 
-    public void add(T item) throws IllegalStateException {
-        if (item == null) {
-            throw new NullPointerException("Element is null.");
-        }
         lock.lock();
         try {
-            if (currentSize == maxSize) {
-                throw new IllegalStateException("Queue is already full.");
+            if (isFull()) {
+                throw new IllegalStateException("Queue is full.");
             }
-            addElement(item);
+            addItem(item);
         } finally {
             lock.unlock();
         }
     }
 
+
     public boolean offer(T item) {
-        if (item == null) {
-            throw new NullPointerException("Element is null.");
-        }
+        nullCheckOnItem(item);
+
         lock.lock();
         try {
-            if (currentSize == maxSize) {
+            if (isFull()) {
                 return false;
             }
-            addElement(item);
+            addItem(item);
             return true;
         } finally {
             lock.unlock();
@@ -57,44 +63,53 @@ public class BlockingQueue<T> {
     }
 
     public void put(T item) throws InterruptedException {
-        if (item == null) {
-            throw new NullPointerException("Element is null.");
-        }
-        lock.lock();
+        nullCheckOnItem(item);
+
+        lock.lockInterruptibly();
         try {
-            while (currentSize == maxSize) {
+            while (isFull()) {
                 fullCondition.await();
             }
-            addElement(item);
+            addItem(item);
         } finally {
             lock.unlock();
         }
     }
 
     public boolean offer(T item, long timeout, TimeUnit timeUnit) throws InterruptedException {
-        if (item == null) {
-            throw new NullPointerException("Element is null.");
-        }
-        long nanos = timeUnit.toNanos(timeout);
-        long deadline = System.nanoTime() + nanos;
-        lock.lock();
+        nullCheckOnItem(item);
+
+        long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
+        lock.lockInterruptibly();
         try {
-            while (currentSize == maxSize) {
-                nanos = deadline - System.nanoTime();
+            while (isFull()) {
+                long nanos = deadline - System.nanoTime();
+                if (nanos <= 0) {
+                    return false;
+                }
                 boolean awaitSuccess = fullCondition.await(nanos, TimeUnit.NANOSECONDS);
-                if (awaitSuccess == false) {
+                if (!awaitSuccess) {
                     return false;
                 }
             }
-            addElement(item);
+            addItem(item);
             return true;
         } finally {
             lock.unlock();
         }
     }
 
-    private void addElement(T item) {
-        currentSize++;
+    private void nullCheckOnItem(T item) {
+        if (item == null) {
+            throw new NullPointerException("Item must be non-null.");
+        }
+    }
+
+    private boolean isFull() {
+        return queue.size() == maxCapacity;
+    }
+
+    private void addItem(T item) {
         queue.add(item);
         emptyCondition.signal();
     }
@@ -104,61 +119,59 @@ public class BlockingQueue<T> {
     public T poll() {
         lock.lock();
         try {
-            if (currentSize == 0) {
+            if (queue.isEmpty()) {
                 return null;
             }
-            return getFront();
+            return pollElement();
         } finally {
             lock.unlock();
         }
     }
 
     public T take() throws InterruptedException {
-        lock.lock();
+        lock.lockInterruptibly();
         try {
-            while (currentSize == 0) {
+            while (queue.isEmpty()) {
                 emptyCondition.await();
             }
-            return getFront();
+            return pollElement();
         } finally {
             lock.unlock();
         }
     }
 
     public T poll(long timeout, TimeUnit timeUnit) throws InterruptedException {
-        long nanos = timeUnit.toNanos(timeout);
-        long deadline = System.nanoTime() + nanos;
-        lock.lock();
+        long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
+        lock.lockInterruptibly();
         try {
-            while (currentSize == 0) {
-                nanos = deadline - System.nanoTime();
+            while (queue.isEmpty()) {
+                long nanos = deadline - System.nanoTime();
+                if (nanos <= 0) {
+                    return null;
+                }
                 boolean awaitSuccess = emptyCondition.await(nanos, TimeUnit.NANOSECONDS);
-                if (awaitSuccess == false) {
+                if (!awaitSuccess) {
                     return null;
                 }
             }
-            return getFront();
+            return pollElement();
         } finally {
             lock.unlock();
         }
     }
 
-    private T getFront() {
-        T item = queue.removeFirst();
-        currentSize--;
+
+    private T pollElement() {
         fullCondition.signal();
-        return item;
+        return queue.poll();
     }
 
     /* ================= EXAMINE METHODS ================= */
 
-    public T peek() throws InterruptedException {
-        lock.lockInterruptibly();
+    public T peek() {
+        lock.lock();
         try {
-            if (currentSize == 0) {
-                return null;
-            }
-            return queue.getFirst();
+            return queue.peek();
         } finally {
             lock.unlock();
         }
@@ -167,7 +180,7 @@ public class BlockingQueue<T> {
     public int size() {
         lock.lock();
         try {
-            return currentSize;
+            return queue.size();
         } finally {
             lock.unlock();
         }
@@ -176,9 +189,10 @@ public class BlockingQueue<T> {
     public int remainingCapacity() {
         lock.lock();
         try {
-            return maxSize - currentSize;
+            return maxCapacity - queue.size();
         } finally {
             lock.unlock();
         }
     }
+
 }
