@@ -7,21 +7,27 @@ import java.util.concurrent.Semaphore;
 
 public class DinningPhilosopher {
     private final int n;
-    private final List<Semaphore> fork;
+    private final List<Semaphore> forkSemaphores;
     private final Semaphore criticalSemaphore;
+
     private final Random rnd = new Random();
 
     public DinningPhilosopher(int n) {
-        this.n = n;
-        this.fork = new ArrayList<>();
-        this.criticalSemaphore = new Semaphore(n - 1);
-        for (int i = 0; i < n; i++) {
-            fork.add(new Semaphore(1));
+        if (n <= 1) {
+            throw new IllegalArgumentException("Number of philosophers must be > 1");
         }
+        this.n = n;
+        this.forkSemaphores = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            this.forkSemaphores.add(new Semaphore(1));
+        }
+        this.criticalSemaphore = new Semaphore(this.n - 1);
+        // N - 1 nodes try to acquire N resources, where each node
+        // and resources are in cycle, can resolve freely without deadlock.
     }
 
     private class PhilosopherRunnable implements Runnable {
-        private int id;
+        private final int id;
 
         public PhilosopherRunnable(int id) {
             this.id = id;
@@ -32,64 +38,103 @@ public class DinningPhilosopher {
             boolean criticalAcquired = false;
             boolean leftAcquired = false;
             boolean rightAcquired = false;
-            int left = this.id;
-            int right = (this.id + 1) % DinningPhilosopher.this.n;
+
             try {
                 criticalSemaphore.acquire();
                 criticalAcquired = true;
 
-                fork.get(left).acquire();
+                getLeftForkSemaphore().acquire();
                 leftAcquired = true;
-                System.out.println("Acquired left fork, with forkId: " + left + " for Philosopher: " + this.id);
+                logLeftForkAcquired();
 
-                fork.get(right).acquire();
+                getRightForkSemaphore().acquire();
                 rightAcquired = true;
-                System.out.println("Acquired right fork, with forkId: " + right + " for Philosopher: " + this.id);
+                logRightForkAcquired();
 
-                System.out.println("Acquired forks, starting eating, for Philosopher: " + this.id);
-                Thread.sleep(rnd.nextInt(500));
 
-                fork.get(left).release();
-                leftAcquired = false;
-                System.out.println("released left fork, with forkId: " + left + " for Philosopher: " + this.id);
+                logStartingEating();
+                eat();
 
-                fork.get(right).release();
+                getRightForkSemaphore().release();
                 rightAcquired = false;
-                System.out.println("released right fork, with forkId: " + right + " for Philosopher: " + this.id);
+                logRightForkReleased();
+
+                getLeftForkSemaphore().release();
+                leftAcquired = false;
+                logLeftForkRelease();
+
                 criticalSemaphore.release();
                 criticalAcquired = false;
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
             } finally {
                 if (criticalAcquired) {
-                    System.out.println("[CRASHED] for this philosopher:" + this.id + " criticalSemaphore was occupied");
+                    System.out.println("[CRASHED]");
                     criticalSemaphore.release();
-                }
-                if (rightAcquired) {
-                    System.out.println("[CRASHED] for this philosopher:" + this.id + " rightFork was occupied");
-                    fork.get(right).release();
                 }
 
                 if (leftAcquired) {
-                    System.out.println("[CRASHED] for this philosopher:" + this.id + " leftFork was occupied");
-                    fork.get(left).release();
+                    System.out.println("[CRASHED]");
+                    getLeftForkSemaphore().release();
+                }
+
+                if (rightAcquired) {
+                    System.out.println("[CRASHED]");
+                    getRightForkSemaphore().release();
                 }
             }
+        }
+
+        private Semaphore getLeftForkSemaphore() {
+            return forkSemaphores.get(this.id);
+        }
+
+        private Semaphore getRightForkSemaphore() {
+            return forkSemaphores.get((this.id + 1) % n);
+        }
+
+        private void eat() throws InterruptedException {
+            Thread.sleep(200 + rnd.nextInt(100));
+        }
+
+        private void logLeftForkAcquired() {
+            System.out.println("Acquired left fork, with forkId: " + this.id + " for Philosopher: " + this.id);
+        }
+
+        private void logRightForkAcquired() {
+            System.out.println("Acquired right fork, with forkId: " + (this.id + 1) % n + " for Philosopher: " + this.id);
+        }
+
+        private void logStartingEating() {
+            System.out.println("Acquired forks, starting eating, for Philosopher: " + this.id);
+        }
+
+        private void logRightForkReleased() {
+            System.out.println("Released right fork, with forkId: " + (this.id + 1) % n + " for Philosopher: " + this.id);
+        }
+
+        private void logLeftForkRelease() {
+            System.out.println("Released left fork, with forkId: " + this.id + " for Philosopher: " + this.id);
         }
     }
 
     public void solve() throws InterruptedException {
-        List<Thread> threads = new ArrayList<>(); // Philosophers Threads
-
-        for (int i = 0; i < this.n; i++) {
-            threads.add(new Thread(new PhilosopherRunnable(i), "Philosopher-" + i));
+        List<Thread> philosopherThreads = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            philosopherThreads.add(new Thread(new PhilosopherRunnable(i), "Philosopher-Thread-" + i));
         }
-        for (Thread t : threads) {
+        for (Thread t : philosopherThreads) {
             t.start();
         }
 
-        for (Thread t : threads) {
+        for (Thread t : philosopherThreads) {
             t.join();
         }
     }
+
+
+    public static void main(String[] args) throws InterruptedException {
+        new DinningPhilosopher(5).solve();
+    }
+
 }
