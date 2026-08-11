@@ -6,25 +6,42 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class SearchInsertDeleteLock {
 
-    private final Lock lock = new ReentrantLock();
-    private final Condition searchCondition = lock.newCondition();
-    private final Condition insertCondition = lock.newCondition();
-    private final Condition deleterCondition = lock.newCondition();
+    private final Lock lock;
+    private final Condition searchWaitCondition;
+    private final Condition insertWaitCondition;
+    private final Condition deleteWaitCondition;
 
     private int waitingSearchers = 0;
     private int waitingInserters = 0;
     private int waitingDeleters = 0;
 
     private int activeSearchers = 0;
-    private boolean inserterActive = false;
-    private boolean deleterActive = false;
+    private boolean activeInserters = false;
+    private boolean activeDeleters = false;
 
-    public void searchEnter() throws InterruptedException {
+    public SearchInsertDeleteLock() {
+        this(false);
+    }
+
+    public SearchInsertDeleteLock(boolean fair) {
+        this.lock = new ReentrantLock(fair);
+        this.searchWaitCondition = this.lock.newCondition();
+        this.insertWaitCondition = this.lock.newCondition();
+        this.deleteWaitCondition = this.lock.newCondition();
+    }
+
+
+    public void lockSearch() throws InterruptedException {
         lock.lock();
         try {
             waitingSearchers++;
-            while (deleterActive || waitingDeleters > 0) {
-                searchCondition.await();
+            try {
+                while (activeDeleters || waitingDeleters > 0) {
+                    searchWaitCondition.await();
+                }
+            } catch (InterruptedException ex) {
+                waitingSearchers--;
+                throw ex;
             }
             waitingSearchers--;
             activeSearchers++;
@@ -33,73 +50,86 @@ public class SearchInsertDeleteLock {
         }
     }
 
-    public void searchExit() {
+    public void unlockSearch() {
         lock.lock();
         try {
             activeSearchers--;
             if (activeSearchers == 0 && waitingDeleters > 0) {
-                deleterCondition.signal();
+                deleteWaitCondition.signal();
             }
         } finally {
             lock.unlock();
         }
     }
 
-    public void insertEnter() throws InterruptedException {
+    public void lockInsert() throws InterruptedException {
         lock.lock();
         try {
             waitingInserters++;
-            while (inserterActive || deleterActive || waitingDeleters > 0) {
-                insertCondition.await();
+            try {
+                while (activeInserters || activeDeleters || waitingDeleters > 0) { // prefer deleter
+                    insertWaitCondition.await();
+                }
+            } catch (InterruptedException ex) {
+                waitingInserters--;
+                throw ex;
             }
             waitingInserters--;
-            inserterActive = true;
+            activeInserters = true;
         } finally {
             lock.unlock();
         }
     }
 
-    public void insertExit() {
+    public void unlockInsert() {
         lock.lock();
         try {
-            inserterActive = false;
+            activeInserters = false;
             if (waitingDeleters > 0) {
-                deleterCondition.signal();
+                deleteWaitCondition.signal();
             } else if (waitingInserters > 0) {
-                insertCondition.signal();
-                // searchCondition.signalAll();
+                insertWaitCondition.signal();
             }
         } finally {
             lock.unlock();
         }
     }
 
-    public void deleteEnter() throws InterruptedException {
+    public void lockDelete() throws InterruptedException {
         lock.lock();
         try {
             waitingDeleters++;
-            while (activeSearchers > 0 || inserterActive || deleterActive) {
-                deleterCondition.await();
+            try {
+                while (activeDeleters || activeInserters || activeSearchers > 0) {
+                    deleteWaitCondition.await();
+                }
+            } catch (InterruptedException ex) {
+                waitingDeleters--;
+                if (waitingDeleters == 0) {
+                    if (waitingInserters > 0) insertWaitCondition.signal();
+                    if (waitingSearchers > 0) searchWaitCondition.signalAll();
+                }
+                throw ex;
             }
             waitingDeleters--;
-            deleterActive = true;
+            activeDeleters = true;
         } finally {
             lock.unlock();
         }
     }
 
-    public void deleteExit() {
+    public void unlockDelete() {
         lock.lock();
         try {
-            deleterActive = false;
+            activeDeleters = false;
             if (waitingDeleters > 0) {
-                deleterCondition.signal();
+                deleteWaitCondition.signal();
             } else {
                 if (waitingInserters > 0) {
-                    insertCondition.signal();
+                    insertWaitCondition.signal();
                 }
                 if (waitingSearchers > 0) {
-                    searchCondition.signalAll();
+                    searchWaitCondition.signalAll();
                 }
             }
         } finally {

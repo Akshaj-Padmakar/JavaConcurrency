@@ -4,48 +4,51 @@ package Problems.S03_NotSoClassical.P01_SearchInsertDeleteList;
 Design a single linked list, that is accessed by 3 types of threads:
     * Searchers -> examine the list, any number of searchers can concurrently access.
     * Inserters -> add element to the end of the list, mutually exclusive wrt other Inserters, but can concurrently access with Searchers.
-    * Deleters -> remove items from anwhere in the list. -> mutually exclusive wrt other Inserters or Searchers or Deleters.
+    * Deleters -> remove items from anywhere in the list. -> mutually exclusive wrt other Inserters or Searchers or Deleters.
  */
 public class SearchInsertDeleteList<E> {
-
-    private Node<E> head = null;
+    private volatile Node<E> head = null; // because searcher threads, needs to read the value directly from memory flushed by inserter threads.(immediately) => head is read/written
     private SearchInsertDeleteLock lock;
 
-    public SearchInsertDeleteList(SearchInsertDeleteLock lock) {
-        this.lock = lock;
+    public SearchInsertDeleteList() {
+        this(false);
+    }
+
+    public SearchInsertDeleteList(boolean fair) {
+        this.lock = new SearchInsertDeleteLock(fair);
     }
 
     public boolean search(E key) throws InterruptedException {
-        lock.searchEnter();
+        lock.lockSearch();
         try {
             return doSearch(key);
         } finally {
-            lock.searchExit();
+            lock.unlockSearch();
         }
     }
 
-    public void insert(E value) throws InterruptedException {
-        lock.insertEnter();
+    public void insert(E key) throws InterruptedException {
+        lock.lockInsert();
         try {
-            doInsert(value);
+            doInsert(key);
         } finally {
-            lock.insertExit();
+            lock.unlockInsert();
         }
     }
 
     public boolean delete(E key) throws InterruptedException {
-        lock.deleteEnter();
+        lock.lockDelete();
         try {
             return doDelete(key);
         } finally {
-            lock.deleteExit();
+            lock.unlockDelete();
         }
     }
 
     private boolean doSearch(E key) {
-        Node<E> cur = head;
+        Node<E> cur = this.head;
         while (cur != null) {
-            if (cur.getVal().equals(key)) {
+            if (cur.getVal() == key) {
                 return true;
             }
             cur = cur.getNxt();
@@ -53,13 +56,13 @@ public class SearchInsertDeleteList<E> {
         return false;
     }
 
-    private void doInsert(E value) {
-        Node<E> node = new Node<E>(value);
+    private void doInsert(E key) {
+        Node<E> node = new Node<E>(key);
+
         if (head == null) {
             head = node;
             return;
         }
-
         Node<E> cur = head;
         while (cur.getNxt() != null) {
             cur = cur.getNxt();
@@ -73,7 +76,7 @@ public class SearchInsertDeleteList<E> {
         while (cur != null) {
             if (cur.getVal().equals(key)) {
                 if (prev == null) {
-                    head = head.getNxt();
+                    head = cur.getNxt();
                 } else {
                     prev.setNxt(cur.getNxt());
                 }
@@ -85,11 +88,12 @@ public class SearchInsertDeleteList<E> {
         return false;
     }
 
-    private static class Node<E> {
+    public static class Node<E> {
         private E val;
-        private Node<E> nxt;
+        private volatile Node<E> nxt;
+        // because searcher threads, needs to read the value directly from memory flushed by inserter threads.(immediately)
 
-        Node(E val) {
+        public Node(E val) {
             this.val = val;
         }
 
@@ -97,13 +101,17 @@ public class SearchInsertDeleteList<E> {
             return this.val;
         }
 
-        public void setNxt(Node<E> nxt) {
-            this.nxt = nxt;
+        public void setVal(E val) {
+            this.val = val;
         }
 
         public Node<E> getNxt() {
             return this.nxt;
         }
-    }
 
+        public void setNxt(Node<E> nxt) {
+            this.nxt = nxt;
+        }
+
+    }
 }

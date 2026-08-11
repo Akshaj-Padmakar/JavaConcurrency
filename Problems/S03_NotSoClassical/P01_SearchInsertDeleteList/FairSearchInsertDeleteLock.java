@@ -1,14 +1,14 @@
 package Problems.S03_NotSoClassical.P01_SearchInsertDeleteList;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
+import java.util.LinkedList;
+import java.util.Queue;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * FAIR (FIFO) Search-Insert-Delete lock: no role can starve.
- *
+ * <p>
  * One FIFO queue of requests. grant() walks the queue FROM THE FRONT, admitting
  * each
  * request that is compatible with the currently-active set, and STOPS at the
@@ -16,85 +16,101 @@ import java.util.concurrent.locks.ReentrantLock;
  * incompatible one. Stopping at the first blocker is what enforces fairness: a
  * later
  * request can never overtake an earlier one it is incompatible with.
- *
+ * <p>
  * Compatibility: search+search ok, search+insert ok, everything with delete is
  * exclusive,
  * insert+insert exclusive.
  */
 public class FairSearchInsertDeleteLock {
-    private enum Type {
-        SEARCH, INSERT, DELETE
-    }
-
-    private static final class Waiter {
-        final Type type;
-        final Condition cond;
-        boolean granted = false;
-
-        Waiter(Type type, Condition cond) {
-            this.type = type;
-            this.cond = cond;
-        }
+    private enum TYPE {
+        SEARCH, INSERT, DELETE;
     }
 
     private final Lock lock = new ReentrantLock();
-    private final Deque<Waiter> queue = new ArrayDeque<>();
+    private final Queue<Node> queue = new LinkedList<>();
 
     private int activeSearchers = 0;
     private boolean activeInserter = false;
     private boolean activeDeleter = false;
 
-    private boolean compatible(Type t) {
-        switch (t) {
-            case SEARCH:
-                return !activeDeleter; // ok with searchers + one inserter
-            case INSERT:
-                return !activeDeleter && !activeInserter; // ok with searchers, not another inserter
-            case DELETE:
-                return !activeDeleter && !activeInserter && activeSearchers == 0; // alone
-            default:
-                return false;
+    private static final class Node {
+        private final TYPE type;
+        private final Condition condition;
+        private boolean granted = false;
+
+        public Node(TYPE type, Condition condition) {
+            this.type = type;
+            this.condition = condition;
+        }
+
+        public TYPE getType() {
+            return this.type;
+        }
+
+        public Condition getCondition() {
+            return this.condition;
+        }
+
+        public boolean getGranted() {
+            return this.granted;
+        }
+
+        public void setGranted(boolean value) {
+            this.granted = value;
         }
     }
 
-    private void addActive(Type t) {
-        if (t == Type.SEARCH)
+    private void addActive(TYPE type) {
+        if (type == TYPE.SEARCH) {
             activeSearchers++;
-        else if (t == Type.INSERT)
+        } else if (type == TYPE.INSERT) {
             activeInserter = true;
-        else
+        } else {
             activeDeleter = true;
+        }
     }
 
-    // Must hold lock. Grant a run of compatible requests from the FRONT; stop at
-    // first blocker.
+    private boolean compatible(TYPE type) {
+        if (type == TYPE.SEARCH) {
+            return !activeDeleter;
+        } else if (type == TYPE.INSERT) {
+            return !activeInserter && !activeDeleter;
+        } else {
+            return activeSearchers == 0 && !activeInserter && !activeDeleter;
+        }
+    }
+
     private void grant() {
         while (!queue.isEmpty()) {
-            Waiter head = queue.peekFirst();
-            if (!compatible(head.type))
-                break; // fairness: don't let anyone behind overtake
-            queue.pollFirst();
-            addActive(head.type);
-            head.granted = true;
-            head.cond.signal();
+            Node head = queue.peek();
+            if (!compatible(head.getType())) {
+                break;
+            }
+            queue.poll();
+            addActive(head.getType());
+            head.setGranted(true);
+            head.getCondition().signal();
         }
     }
 
-    private void enter(Type t) throws InterruptedException {
+
+    private void enter(TYPE type) throws InterruptedException {
         lock.lock();
         try {
-            Waiter w = new Waiter(t, lock.newCondition());
-            queue.addLast(w);
-            grant(); // maybe grant immediately (if at front & compatible)
-            while (!w.granted) {
+            Node node = new Node(type, lock.newCondition());
+            queue.add(node);
+            grant();
+            while (!node.getGranted()) {
                 try {
-                    w.cond.await();
-                } catch (InterruptedException ie) {
-                    if (!w.granted) { // interrupted before being granted: remove ghost, unblock others
-                        queue.remove(w);
-                        grant();
+                    node.getCondition().await();
+                } catch (InterruptedException ex) {
+                    if (node.getGranted()) { // Interrupted but granted...
+                        Thread.currentThread().interrupt();
+                        return;
                     }
-                    throw ie;
+                    queue.remove(node);
+                    grant();
+                    throw ex;
                 }
             }
         } finally {
@@ -102,42 +118,43 @@ public class FairSearchInsertDeleteLock {
         }
     }
 
-    private void exit(Type t) {
+    private void exit(TYPE type) {
         lock.lock();
         try {
-            if (t == Type.SEARCH)
+            if (type == TYPE.SEARCH) {
                 activeSearchers--;
-            else if (t == Type.INSERT)
+            } else if (type == TYPE.INSERT) {
                 activeInserter = false;
-            else
+            } else {
                 activeDeleter = false;
-            grant(); // an exit may unblock the queue head
+            }
+            grant();
         } finally {
             lock.unlock();
         }
     }
 
-    public void searchLock() throws InterruptedException {
-        enter(Type.SEARCH);
+    public void lockSearch() throws InterruptedException {
+        enter(TYPE.SEARCH);
     }
 
-    public void searchUnlock() {
-        exit(Type.SEARCH);
+    public void unlockSearch() {
+        exit(TYPE.SEARCH);
     }
 
-    public void insertLock() throws InterruptedException {
-        enter(Type.INSERT);
+    public void lockInsert() throws InterruptedException {
+        enter(TYPE.INSERT);
     }
 
-    public void insertUnlock() {
-        exit(Type.INSERT);
+    public void unlockInsert() {
+        exit(TYPE.INSERT);
     }
 
-    public void deleteLock() throws InterruptedException {
-        enter(Type.DELETE);
+    public void lockDelete() throws InterruptedException {
+        enter(TYPE.DELETE);
     }
 
-    public void deleteUnlock() {
-        exit(Type.DELETE);
+    public void unlockDelete() {
+        exit(TYPE.DELETE);
     }
 }

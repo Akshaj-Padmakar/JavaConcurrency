@@ -1,82 +1,163 @@
-# Search-Insert-Delete
+# Search–Insert–Delete
 
-> Book ref: _The Little Book of Semaphores_ §6.1.
-> Common interview form (e.g. Rubrik): _"3-state access control"_ / _"synchronized singly-linked
-> list with searchers, inserters, deleters."_
+> Book ref: *The Little Book of Semaphores* §6.1.
+> Turns up in interviews (Rubrik included) as *"3-state access control"* or *"a synchronised linked
+> list with searchers, inserters and deleters."*
 
-## Problem
+> A singly-linked list is used by three kinds of thread. **Searchers** only read it — any number can
+> run at once. **Inserters** append to the tail — one at a time, but they may run alongside
+> searchers. **Deleters** remove a node from anywhere — they need the list completely to themselves.
+> Write the synchronisation. Then tell me who starves.
 
-A singly-linked list is accessed by **three kinds of threads**. Design the synchronization so the
-following concurrency rules hold:
+## What you're building
 
-- **Searchers** — only read the list. **Any number run concurrently** with each other.
-- **Inserters** — append to the tail. **Mutually exclusive with other inserters**, but may run
-  **concurrently with searchers**.
-- **Deleters** — remove a node from anywhere. **Exclusive with everything** — no other deleter,
-  inserter, or searcher may be active during a delete.
+**Role-based access control over a shared structure**, where the compatibility rules are richer than
+reader/writer.
 
-### API
+A snapshot catalogue behaves exactly like this: lookups run constantly, appends happen as a backup
+streams new chunk records in, and a retention GC that unlinks expired entries needs the structure to
+itself. Lookups don't conflict with each other. An append doesn't conflict with a lookup — it only
+adds. An unlink conflicts with everything, because it rewires pointers that others are standing on.
+
+The whole spec is one table:
+
+|              | Searcher | Inserter | Deleter |
+| ------------ | :------: | :------: | :-----: |
+| **Searcher** |    ✅    |    ✅    |    ❌   |
+| **Inserter** |    ✅    |    ❌    |    ❌   |
+| **Deleter**  |    ❌    |    ❌    |    ❌   |
+
+Many searchers **plus** one inserter may overlap; a deleter runs alone.
+
+**Why this isn't a read-write lock.** `ReentrantReadWriteLock` has two modes. Here the middle role is
+a *writer that tolerates readers* — a third state the two-mode lock cannot express. Model it as two
+roles and you either serialise search against insert (throwing away the concurrency the problem
+exists to provide) or you let a deleter run beside a searcher.
+
+## Worked example
+
+| # | Thread | Action | Active | Outcome |
+|---|---|---|---|---|
+| 1 | S1 | search | searchers=1 | runs |
+| 2 | S2 | search | searchers=2 | runs — searchers share |
+| 3 | I1 | insert | searchers=2, inserter=1 | runs — insert tolerates searchers |
+| 4 | I2 | insert | unchanged | **blocks** — one inserter at a time |
+| 5 | D1 | delete | unchanged | **blocks** — anything active excludes a deleter |
+| 6 | S3 | search | ? | **depends entirely on your starvation policy** |
+| 7 | — | S1, S2, I1 all exit | nothing active | D1 finally runs, alone |
+
+Step 6 is the design decision the problem is really asking about.
+
+## The failure you're designing against
+
+A steady trickle of searchers, each overlapping the last:
+
+| # | Active searchers | Deleter D1 |
+|---|---|---|
+| 1 | S1 | arrives, blocks |
+| 2 | S1, S2 | still blocked |
+| 3 | S2, S3 (S1 left) | still blocked — the count never reached 0 |
+| 4 | S3, S4 | still blocked |
+| … | never empty | **never runs** |
+
+No individual searcher does anything wrong and the count is never illegal — the deleter simply never
+sees a gap. This is livelock-adjacent: the system makes progress, one participant never does.
+
+## The API
 
 ```java
-boolean search(E key);
-void    insert(E value);
-boolean delete(E key);
+public class SearchInsertDeleteList<E> {
+    public SearchInsertDeleteList(SearchInsertDeleteLock lock);
+
+    public boolean search(E key)   throws InterruptedException;
+    public void    insert(E value) throws InterruptedException;
+    public boolean delete(E key)   throws InterruptedException;
+}
 ```
 
-### Compatibility matrix (the spec, in one table)
+The policy lives in a separate object, so the list only knows *when* it's allowed to touch itself:
 
-|            | Searcher | Inserter | Deleter |
-| ---------- | :------: | :------: | :-----: |
-| **Searcher** |   ✅    |    ✅    |   ❌    |
-| **Inserter** |   ✅    |    ❌    |   ❌    |
-| **Deleter**  |   ❌    |    ❌    |   ❌    |
+```java
+public class SearchInsertDeleteLock {
+    public void searchEnter() throws InterruptedException;  public void searchExit();
+    public void insertEnter() throws InterruptedException;  public void insertExit();
+    public void deleteEnter() throws InterruptedException;  public void deleteExit();
+}
+```
 
-Read it as: *many searchers + at most one inserter can overlap; a deleter runs completely alone.*
+```java
+var list = new SearchInsertDeleteList<String>(new SearchInsertDeleteLock());
+list.insert("chunk-a");
+boolean found = list.search("chunk-a");
+list.delete("chunk-a");
+```
 
-## Why it's not just a read-write lock
+Each list method is `enter → work → exit`, with `exit` in a `finally`.
 
-It looks like readers-writers, but there are **three** roles, not two, and the middle one (insert)
-is special: it's a "writer" that **tolerates readers** (searchers) but not other writers. So you need
-per-role state, not a single reader-count.
+## Constraints
 
-## The two things being tested
-
-1. **Scheduling** — encode the matrix with the right counters/flags and signal the right waiters.
-2. **Memory visibility (the deep part)** — because the point is to let search + insert **overlap**,
-   the actual list read/write must happen **outside** any exclusive lock. That means the shared node
-   fields are touched by two threads with no common lock held → you must **publish** them
-   (`volatile`/`final`) or you have a data race. Scheduling ≠ visibility.
-
-## Points to Ponder / interview follow-ups
-
-- **Which primitives?** Monitor (`ReentrantLock` + 3 `Condition`s + role counters/flags), or
-  semaphores (`Semaphore` mutexes + a searcher-count lightswitch). Trade-offs?
-- **Starvation of deleters** (asked verbatim in the Rubrik variant): a stream of searchers/inserters
-  can starve a deleter forever. How do you prevent it? → **deleter-preference**: once a deleter is
-  waiting, block *new* searchers and inserters (`waitingDeleters > 0`), let the in-flight ones drain,
-  then run the deleter. (This is the turnstile idea from readers-writers.)
-- **The flip side:** deleter-preference can now **starve searchers/inserters** under a delete flood.
-  How would you make it **fair** (bounded waiting for everyone)? → a FIFO turnstile / ticket lock.
-- **Visibility:** if search and insert truly overlap, is the list access memory-safe? What makes
-  `head`, `Node.next`, `Node.val` safe for a searcher to read mid-insert? (`volatile` / `final`.)
-- **Why not just hold one exclusive lock for each op?** Because that serializes search+insert and
-  throws away the concurrency the problem demands. The whole difficulty comes from *allowing* the
-  overlap.
-- **Insert at tail vs anywhere:** appending at the tail is *structurally* safe for a concurrent
-  searcher (it sees the new node or not — both fine). Would inserting in the *middle* still be safe
-  concurrently with searchers? (Harder — pointer rewiring a searcher may be mid-traversal of.)
-- **Delete semantics:** delete is fully exclusive here, so it can rewire freely. Could you relax it
-  to allow concurrent searchers with careful hazard pointers / RCU? (Lock-free territory — mention
-  `ConcurrentLinkedQueue`, `ConcurrentSkipListSet`.)
-- **JDK shortcut:** what does `ReentrantReadWriteLock` give you, and why is it **not** enough here?
-  (It has only two states; insert-tolerates-search is a third state it can't express.)
-- **Fairness param, reentrancy, interruptibility** — does your lock need any of these?
-- **Termination / testing:** how do you test that the matrix actually holds (no illegal overlap)
-  under stress? (Instrument active counts; assert invariants like "deleterActive ⇒ everything else 0".)
+- **No `ReentrantReadWriteLock`, no `StampedLock`** — and note they couldn't express the matrix
+  anyway.
+- **No `java.util.concurrent` collections.** The list is hand-rolled; that's the point.
+- `ReentrantLock` + `Condition` is fine. Be ready to drop to `synchronized` / `wait` / `notifyAll`,
+  or to build it from hand-rolled semaphores.
+- **No busy-waiting**, and no `Thread.sleep` used as synchronisation.
 
 ## Requirements
 
-- Enforce the compatibility matrix exactly (no illegal overlap).
-- Pick and **state** a starvation policy for deleters.
-- Make the concurrent search+insert **memory-safe** (publish shared fields).
-- Avoid busy-waiting; use `while`-guarded conditions.
+- **Enforce the matrix exactly.** No illegal overlap, in either direction.
+- **Search and insert must genuinely overlap** — a solution that serialises them satisfies the matrix
+  and fails the problem.
+- **State a starvation policy** for deleters, and say who pays for it.
+- **The concurrent search/insert must be memory-safe**, not merely correctly scheduled.
+- Waiting threads consume no CPU and respond to interruption.
+- `exit` must run even if the operation throws.
+
+## Edge cases
+
+- Searching, inserting into, or deleting from an empty list.
+- Deleting the head; deleting a key that isn't present.
+- A searcher traversing while an inserter appends the node it is about to reach.
+- The last searcher leaving at the same moment a deleter arrives.
+- `insertExit()` / `deleteExit()` called by a thread that never entered.
+- A thread interrupted while waiting to enter.
+- A searcher that calls `search` again from inside a search (reentrancy).
+
+## Questions to answer before you code
+
+1. Write each of the three entry guards as a boolean over your state. What is the **minimum** state —
+   how many counters and how many flags?
+2. Which single cell of the matrix is the one `ReentrantReadWriteLock` cannot express? Say it in one
+   sentence.
+3. Searchers and inserters overlap by design, so one thread reads the node fields while another
+   writes them **with no common lock held**. Is your list memory-safe? Correct scheduling and correct
+   visibility are different problems — which one have you actually solved?
+4. Appending at the **tail** is structurally benign for a concurrent searcher — why? Would inserting
+   in the **middle** still be, and what changes?
+5. Under your policy, which role starves? Write the exact sequence of operations that starves it.
+6. Blocking new arrivals once a deleter is waiting fixes deleter starvation. What does that break,
+   and what would you do about *that*?
+7. When a deleter exits, who do you wake — one searcher, all searchers, one inserter, or everything?
+   Justify from the shape of each predicate, not from what feels efficient.
+8. Do the three roles need three separate conditions, or can some share one? What decides it?
+9. What should `deleteExit()` do if called by a thread that never entered?
+10. How would you *prove* the matrix holds under stress? Name the invariant you'd assert and the
+    moment you'd assert it.
+11. The lock is a separate object from the list. What does that separation buy you — and what would
+    you lose by folding the counters into the list itself?
+
+## Jargon
+
+| The plain phrasing | The term to use out loud |
+|---|---|
+| "any number at once" | shared mode |
+| "one at a time, completely alone" | exclusive mode |
+| "a writer that tolerates readers" | the third state — why a two-mode lock doesn't fit |
+| "who is allowed in together" | compatibility matrix |
+| "the first one in locks the door, the last one out unlocks it" | lightswitch |
+| "a waiting deleter blocks new arrivals" | deleter preference; turnstile |
+| "one role never gets a turn" | starvation |
+| "everyone is served in arrival order" | FIFO fairness, ticket lock |
+| "safe to read while another thread is writing it" | safe publication, visibility |
+| "the scheduling is right but the data isn't visible" | data race — distinct from a race condition |
+| "read without locking and check afterwards" | optimistic reads, RCU, hazard pointers |
