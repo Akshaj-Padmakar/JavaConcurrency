@@ -1,11 +1,11 @@
-package Problems.S01_Classic.P04_CigratteSmoker;
+package Problems.S01_Classic.P04_CigaretteSmoker;
 
 import java.util.Random;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class CigratteSmoker {
+public class CigaretteSmoker {
 
     private final Lock lock = new ReentrantLock();
 
@@ -15,14 +15,14 @@ public class CigratteSmoker {
 
     private boolean stop = false;
 
-    private Random rnd = new Random();
-    private Condition pusherCondition = lock.newCondition();
+    private final Random rnd = new Random();
+    private final Condition pusherCondition = lock.newCondition();
 
-    private Condition paperCondition = lock.newCondition();
-    private Condition matchesCondition = lock.newCondition();
-    private Condition tobaccoCondition = lock.newCondition();
+    private final Condition paperCondition = lock.newCondition();
+    private final Condition matchesCondition = lock.newCondition();
+    private final Condition tobaccoCondition = lock.newCondition();
 
-    public class AgentRunnable implements Runnable {
+    private class AgentRunnable implements Runnable {
         @Override
         public void run() {
             lock.lock();
@@ -49,7 +49,7 @@ public class CigratteSmoker {
         }
     }
 
-    public class PusherRunnable implements Runnable {
+    private class PusherRunnable implements Runnable {
         @Override
         public void run() {
             lock.lock();
@@ -57,7 +57,7 @@ public class CigratteSmoker {
                 while (!((paper && matches) || (paper && tobacco) || (matches && tobacco))) {
                     pusherCondition.await();
                 }
-                if (!paper) { // matches and tobacco are put forwar by agent.
+                if (!paper) { // matches and tobacco are put forward by agent.
                     paperCondition.signal();
                 } else if (!matches) {
                     matchesCondition.signal();
@@ -66,7 +66,6 @@ public class CigratteSmoker {
                 }
 
             } catch (InterruptedException ex) {
-                ex.printStackTrace();
                 Thread.currentThread().interrupt();
             } finally {
                 lock.unlock();
@@ -74,7 +73,7 @@ public class CigratteSmoker {
         }
     }
 
-    public class PaperSmokerRunnable implements Runnable {
+    private class PaperSmokerRunnable implements Runnable {
         @Override
         public void run() {
             lock.lock();
@@ -88,7 +87,6 @@ public class CigratteSmoker {
                 System.out.println("Smoker with Paper have all the ingredients now ! ROLLING.......");
                 System.out.println("SMOKING.....");
             } catch (InterruptedException ex) {
-                ex.printStackTrace();
                 Thread.currentThread().interrupt();
             } finally {
                 doFinally();
@@ -97,7 +95,7 @@ public class CigratteSmoker {
         }
     }
 
-    public class MatchesSmokerRunnable implements Runnable {
+    private class MatchesSmokerRunnable implements Runnable {
         @Override
         public void run() {
             lock.lock();
@@ -112,7 +110,6 @@ public class CigratteSmoker {
                 System.out.println("Smoker with Matches have all the ingredients now ! ROLLING.......");
                 System.out.println("SMOKING.....");
             } catch (InterruptedException ex) {
-                ex.printStackTrace();
                 Thread.currentThread().interrupt();
             } finally {
                 doFinally();
@@ -121,7 +118,7 @@ public class CigratteSmoker {
         }
     }
 
-    public class TobaccoSmokerRunnable implements Runnable {
+    private class TobaccoSmokerRunnable implements Runnable {
         @Override
         public void run() {
             lock.lock();
@@ -136,7 +133,6 @@ public class CigratteSmoker {
                 System.out.println("Smoker with Tobacco have all the ingredients now ! ROLLING.......");
                 System.out.println("SMOKING.....");
             } catch (InterruptedException ex) {
-                ex.printStackTrace();
                 Thread.currentThread().interrupt();
             } finally {
                 doFinally();
@@ -147,6 +143,9 @@ public class CigratteSmoker {
 
     private void doFinally() {
         stop = true;
+        paper = false;
+        tobacco = false;
+        matches = false;
         paperCondition.signal();
         tobaccoCondition.signal();
         matchesCondition.signal();
@@ -177,7 +176,7 @@ public class CigratteSmoker {
         matchesThread.join();
     }
 
-    public static void main(String args[]) throws InterruptedException {
-        new CigratteSmoker().solve();
+    public static void main(String[] args) throws InterruptedException {
+        new CigaretteSmoker().solve();
     }
 }
