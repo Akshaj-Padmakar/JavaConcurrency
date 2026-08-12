@@ -4,8 +4,8 @@ import java.util.concurrent.Semaphore;
 
 public class OddEvenPrinterSemaphore {
     private final int n;
-    private final Semaphore oddSemaphore = new Semaphore(1);
-    private final Semaphore evenSemaphore = new Semaphore(0);
+    private final Semaphore oddSemaphore = new Semaphore(0);
+    private final Semaphore evenSemaphore = new Semaphore(1);
     private int current = 0;
 
     public OddEvenPrinterSemaphore(int n) {
@@ -38,7 +38,7 @@ public class OddEvenPrinterSemaphore {
                     evenSemaphore.release(1);
                 }
             } catch (InterruptedException ex) {
-                ex.printStackTrace();
+                Thread.currentThread().interrupt();
             }
         }
     }
@@ -58,7 +58,7 @@ public class OddEvenPrinterSemaphore {
                     oddSemaphore.release(1);
                 }
             } catch (InterruptedException ex) {
-                ex.printStackTrace();
+                Thread.currentThread().interrupt();
             }
         }
     }
@@ -66,5 +66,9 @@ public class OddEvenPrinterSemaphore {
     private void printCurrentValueAndThread() {
         System.out.println(
                 "current = " + current + ", printed by Thread = " + Thread.currentThread().getName());
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        new OddEvenPrinterSemaphore(10).solve();
     }
 }

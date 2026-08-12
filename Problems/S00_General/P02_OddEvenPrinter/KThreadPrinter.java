@@ -6,9 +6,9 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-/* 
+/*
  * Given k threads, start from 0, and print the i th value with i % k-th thread.
-*/
+ */
 public class KThreadPrinter {
     private final int n;
     private final int k;
@@ -61,7 +61,7 @@ public class KThreadPrinter {
                     current++;
                     signalNextThread();
                 } catch (InterruptedException ex) {
-                    ex.printStackTrace();
+                    Thread.currentThread().interrupt();
                 } finally {
                     lock.unlock();
                 }

@@ -36,7 +36,6 @@ public class OddEvenPrinter {
                     cur++;
                     evenCondition.signal();
                 } catch (InterruptedException ex) {
-                    ex.printStackTrace();
                     Thread.currentThread().interrupt();
                     break;
                 } finally {
@@ -63,7 +62,6 @@ public class OddEvenPrinter {
                     cur++;
                     oddCondition.signal();
                 } catch (InterruptedException ex) {
-                    ex.printStackTrace();
                     Thread.currentThread().interrupt();
                     break;
                 } finally {
