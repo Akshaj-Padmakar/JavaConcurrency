@@ -11,8 +11,8 @@ Design a class that mimics basic file storage.
 The storage should support:
 
 ```java
-void write(int offset, String data)
-String read(int offset, int length)
+void write(int offset, String data);
+String read(int offset, int length);
 ```
 
 ### Write
